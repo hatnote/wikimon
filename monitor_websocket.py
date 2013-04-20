@@ -6,6 +6,13 @@ from autobahn.websocket import (WebSocketServerFactory,
                                 listenWS)
 import re
 from json import dumps
+
+DEBUG = False
+
+import logging
+bcast_log = logging.getLogger('bcast_log')
+
+
 CHANNEL = 'en.wikipedia'  # use language.project
 COLOR_RE = re.compile(r"\x03(?:\d{1,2}(?:,\d{1,2})?)?",
                       re.UNICODE)  # remove IRC color codes
@@ -55,15 +62,15 @@ def process_message(message):
 class Monitor(irc.IRCClient):
     def __init__(self, bsf):
         self.broadcaster = bsf
-        print 'created IRC ...'
+        bcast_log.info('created IRC ...')
 
     def connectionMade(self):
         irc.IRCClient.connectionMade(self)
-        print 'connected to IRC server...'
+        bcast_log.info('connected to IRC server...')
 
     def signedOn(self):
         self.join(self.factory.channel)
-        print 'joined', self.factory.channel, '...'
+        bcast_log.info('joined %s ...', self.factory.channel)
 
     def privmsg(self, user, channel, msg):
         rc = process_message(msg)
@@ -144,19 +151,19 @@ class BroadcastServerFactory(WebSocketServerFactory):
 
     def register(self, client):
         if not client in self.clients:
-            print "registered client " + client.peerstr
+            bcast_log.info("registered client %s", client.peerstr)
         self.clients.append(client)
 
     def unregister(self, client):
         if client in self.clients:
-            print "unregistered client " + client.peerstr
+            bcast_log.info("unregistered client %s", client.peerstr)
             self.clients.remove(client)
 
     def broadcast(self, msg):
-        print "broadcasting message '%s' .." % msg
+        bcast_log.info("broadcasting message %r", msg)
         for c in self.clients:
             c.sendMessage(msg)
-            print "message sent to " + c.peerstr
+            bcast_log.info("message sent to %s", c.peerstr)
 
 
 class BroadcastPreparedServerFactory(BroadcastServerFactory):
@@ -165,7 +172,7 @@ class BroadcastPreparedServerFactory(BroadcastServerFactory):
         preparedMsg = self.prepareMessage(msg)
         for c in self.clients:
             c.sendPreparedMessage(preparedMsg)
-            print "prepared message sent to " + c.peerstr
+            bcast_log.info("prepared message sent to %s", c.peerstr)
 
 
 def start_monitor(bsf):
@@ -174,12 +181,11 @@ def start_monitor(bsf):
 
 
 if __name__ == '__main__':
-    debug = False
     # start_monitor()
     ServerFactory = BroadcastServerFactory
     factory = ServerFactory("ws://localhost:9000",
-                            debug=debug,
-                            debugCodePaths=debug)
+                            debug=DEBUG,
+                            debugCodePaths=DEBUG)
 
     factory.protocol = BroadcastServerProtocol
     factory.setProtocolOptions(allowHixie76=True)
