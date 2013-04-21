@@ -65,6 +65,3 @@ if __name__ == '__main__':
     f = MonitorFactory(CHANNEL)
     reactor.connectTCP("irc.wikimedia.org", 6667, f)
     reactor.run()
-
-
-    #(\[\[(?P<page_title>.*?)\]\]) +((?P<flags>[A-Z\!]+) )?(?P<url>\S*) +\* (?P<user>.*?) \* (\((?P<change_size>[\+\-][0-9]+)\))? ?(?P<summary>.+)?
