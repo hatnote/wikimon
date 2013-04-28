@@ -17,9 +17,6 @@ if __name__ == '__main__':
 mon_log = logging.getLogger(logger_name)
 mon_log.setLevel(logging.DEBUG)
 
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO) 
-mon_log.addHandler(console_handler)
 
 CHANNEL = 'en.wikipedia' # use language.project
 
@@ -40,22 +37,22 @@ def process_message(message):
     return {}
 
 
-class Monitor(irc.IRCClient): 
+class Monitor(irc.IRCClient):
     def connectionMade(self):
         irc.IRCClient.connectionMade(self)
- 
+
     def signedOn(self):
         self.join(self.factory.channel)
- 
+
     def privmsg(self, user, channel, msg):
         processed = process_message(msg)
         mon_log.info('%r', processed)
 
- 
+
 class MonitorFactory(protocol.ClientFactory):
     def __init__(self, channel):
         self.channel = channel
- 
+
     def buildProtocol(self, addr):
         p = Monitor()
         p.factory = self

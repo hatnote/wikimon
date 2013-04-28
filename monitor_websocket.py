@@ -10,10 +10,16 @@ from json import dumps
 DEBUG = False
 
 import logging
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s\t%(name)s\t %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S')
 bcast_log = logging.getLogger('bcast_log')
 
 
-CHANNEL = 'en.wikipedia'  # use language.project
+DEFAULT_LANG = 'en'
+DEFAULT_PROJECT = 'wikipedia'
+DEFAULT_BCAST_PORT = 9000
+
 COLOR_RE = re.compile(r"\x03(?:\d{1,2}(?:,\d{1,2})?)?",
                       re.UNICODE)  # remove IRC color codes
 PARSE_EDIT_RE = re.compile(r'(\[\[(?P<page_title>.*?)\]\])'
@@ -62,7 +68,7 @@ def process_message(message):
 class Monitor(irc.IRCClient):
     def __init__(self, bsf):
         self.broadcaster = bsf
-        bcast_log.info('created IRC ...')
+        bcast_log.info('created IRC monitor...')
 
     def connectionMade(self):
         irc.IRCClient.connectionMade(self)
@@ -135,14 +141,12 @@ class BroadcastServerProtocol(WebSocketServerProtocol):
 
 
 class BroadcastServerFactory(WebSocketServerFactory):
-    def __init__(self, url, debug=False, debugCodePaths=False):
-        WebSocketServerFactory.__init__(self,
-                                        url,
-                                        debug=debug,
-                                        debugCodePaths=debugCodePaths)
+    def __init__(self, url, lang, project, *a, **kw):
+        WebSocketServerFactory.__init__(self, url, *a, **kw)
         self.clients = []
         self.tickcount = 0
-        start_monitor(self)
+
+        start_monitor(self, lang, project)  # blargh
 
     def tick(self):
         self.tickcount += 1
@@ -163,7 +167,7 @@ class BroadcastServerFactory(WebSocketServerFactory):
         bcast_log.info("broadcasting message %r", msg)
         for c in self.clients:
             c.sendMessage(msg)
-            bcast_log.info("message sent to %s", c.peerstr)
+            bcast_log.debug("message sent to %s", c.peerstr)
 
 
 class BroadcastPreparedServerFactory(BroadcastServerFactory):
@@ -175,19 +179,45 @@ class BroadcastPreparedServerFactory(BroadcastServerFactory):
             bcast_log.info("prepared message sent to %s", c.peerstr)
 
 
-def start_monitor(bsf):
-    f = MonitorFactory(CHANNEL, bsf)
+def start_monitor(broadcaster, lang=DEFAULT_LANG, project=DEFAULT_PROJECT):
+    channel = '%s.%s' % (lang, project)
+    bcast_log.info('connecting to %s...' % channel)
+    f = MonitorFactory(channel, broadcaster)
     reactor.connectTCP("irc.wikimedia.org", 6667, f)
 
 
-if __name__ == '__main__':
-    # start_monitor()
+def create_parser():
+    from argparse import ArgumentParser
+    desc = "broadcast realtime edits to a Mediawiki project over websockets"
+    prs = ArgumentParser(description=desc)
+    prs.add_argument('--project', default=DEFAULT_PROJECT)
+    prs.add_argument('--lang', default=DEFAULT_LANG)
+    prs.add_argument('--port', default=DEFAULT_BCAST_PORT, type=int,
+                     help='listen port for websocket connections')
+    prs.add_argument('--debug', default=DEBUG, action='store_true')
+    prs.add_argument('--loglevel', default='WARN')
+    return prs
+
+
+def main():
+    parser = create_parser()
+    args = parser.parse_args()
+    try:
+        bcast_log.setLevel(getattr(logging, args.loglevel))
+    except:
+        print 'warning: invalid log level'
+        bcast_log.setLevel(logging.WARN)
+    ws_listen_addr = 'ws://localhost:%d' % (args.port,)
     ServerFactory = BroadcastServerFactory
-    factory = ServerFactory("ws://localhost:9000",
+    factory = ServerFactory(ws_listen_addr,
+                            project=args.project,
+                            lang=args.lang,
                             debug=DEBUG,
                             debugCodePaths=DEBUG)
-
     factory.protocol = BroadcastServerProtocol
     factory.setProtocolOptions(allowHixie76=True)
     listenWS(factory)
     reactor.run()
+
+if __name__ == '__main__':
+    main()
