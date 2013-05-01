@@ -143,7 +143,7 @@ class BroadcastServerProtocol(WebSocketServerProtocol):
 class BroadcastServerFactory(WebSocketServerFactory):
     def __init__(self, url, lang, project, *a, **kw):
         WebSocketServerFactory.__init__(self, url, *a, **kw)
-        self.clients = []
+        self.clients = set()
         self.tickcount = 0
 
         start_monitor(self, lang, project)  # blargh
@@ -156,12 +156,14 @@ class BroadcastServerFactory(WebSocketServerFactory):
     def register(self, client):
         if not client in self.clients:
             bcast_log.info("registered client %s", client.peerstr)
-        self.clients.append(client)
+        self.clients.add(client)
 
     def unregister(self, client):
-        if client in self.clients:
-            bcast_log.info("unregistered client %s", client.peerstr)
+        try:
             self.clients.remove(client)
+            bcast_log.info("unregistered client %s", client.peerstr)
+        except KeyError:
+            pass
 
     def broadcast(self, msg):
         bcast_log.info("broadcasting message %r", msg)
@@ -172,7 +174,6 @@ class BroadcastServerFactory(WebSocketServerFactory):
 
 class BroadcastPreparedServerFactory(BroadcastServerFactory):
     def broadcast(self, msg):
-        # print "broadcasting prepared message '%s' .." % msg
         preparedMsg = self.prepareMessage(msg)
         for c in self.clients:
             c.sendPreparedMessage(preparedMsg)
