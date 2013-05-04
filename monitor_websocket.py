@@ -5,6 +5,7 @@ from autobahn.websocket import (WebSocketServerFactory,
                                 WebSocketServerProtocol,
                                 listenWS)
 import re
+import wapiti
 from json import dumps
 
 DEBUG = False
@@ -16,7 +17,7 @@ logging.basicConfig(level=logging.DEBUG,
 bcast_log = logging.getLogger('bcast_log')
 
 
-DEFAULT_LANG = 'en'
+DEFAULT_LANG = 'fr'
 DEFAULT_PROJECT = 'wikipedia'
 DEFAULT_BCAST_PORT = 9000
 
@@ -66,8 +67,9 @@ def process_message(message):
 
 
 class Monitor(irc.IRCClient):
-    def __init__(self, bsf):
+    def __init__(self, bsf, nmns):
         self.broadcaster = bsf
+        self.non_main_ns = nmns
         bcast_log.info('created IRC monitor...')
 
     def connectionMade(self):
@@ -79,6 +81,11 @@ class Monitor(irc.IRCClient):
         bcast_log.info('joined %s ...', self.factory.channel)
 
     def privmsg(self, user, channel, msg):
+        try:
+            msg = msg.decode('utf-8')
+        except UnicodeError as ue:
+            bcast_log.warn('UnicodeError: %r on IRC message %r', (ue, msg))
+            return
         rc = process_message(msg)
         rc['is_new'] = False
         rc['is_bot'] = False
@@ -96,8 +103,8 @@ class Monitor(irc.IRCClient):
             - Special:Log/upload
             - Special:Log/patrol
         '''
-        ns, _, title = rc['page_title'].partition(':')
-        if not title or ns not in NON_MAIN_NS:
+        ns, _, title = rc['page_title'].rpartition(':')
+        if ns not in self.non_main_ns:
             rc['ns'] = 'Main'
         else:
             rc['ns'] = ns
@@ -112,17 +119,17 @@ class Monitor(irc.IRCClient):
         if rc['user'] and sum([a.isdigit() for a in rc['user'].split('.')]) == 4:
             rc['is_anon'] = True
         # Which revisions to broadcast?
-        if rc['is_anon'] and rc['ns'] == 'Main':
-            self.broadcaster.broadcast(dumps(rc))
+        self.broadcaster.broadcast(dumps(rc))
 
 
 class MonitorFactory(protocol.ClientFactory):
-    def __init__(self, channel, bsf):
+    def __init__(self, channel, bsf, nmns=NON_MAIN_NS):
         self.channel = channel
         self.bsf = bsf
+        self.nmns = nmns
 
     def buildProtocol(self, addr):
-        p = Monitor(self.bsf)
+        p = Monitor(self.bsf, self.nmns)
         p.factory = self
         return p
 
@@ -182,8 +189,13 @@ class BroadcastPreparedServerFactory(BroadcastServerFactory):
 
 def start_monitor(broadcaster, lang=DEFAULT_LANG, project=DEFAULT_PROJECT):
     channel = '%s.%s' % (lang, project)
+    api_url = 'http://%s.%s.org/w/api.php' % (lang, project)
+    bcast_log.info('fetching namespaces from %r', api_url)
+    wc = wapiti.WapitiClient('wikimon@hatnote.com', api_url=api_url)
+    page_info = wc.get_source_info()
+    nmns = [ns.title for ns in page_info[0].namespace_map if ns.title]
     bcast_log.info('connecting to %s...' % channel)
-    f = MonitorFactory(channel, broadcaster)
+    f = MonitorFactory(channel, broadcaster, nmns)
     reactor.connectTCP("irc.wikimedia.org", 6667, f)
 
 
