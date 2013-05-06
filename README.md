@@ -4,16 +4,17 @@ Watch the [RecentChanges IRC
 feed](http://meta.wikimedia.org/wiki/Research:Data#IRC_Feeds) with
 Python. Support for various WikiMedia projects and languages.
 
-## Requirements
-
- - Twisted==13.0.0
- - autobahn==0.5.14
- - [wapiti](https://github.com/mahmoud/wapiti)
 
 ## Usage
 
 At the moment, WikiMon's primary usage pattern is broadcasting changes
-over WebSocket. To do that, simply run `monitor_websocket.py`:
+over WebSocket. If you'd simply like to consume these messages, feel
+free to point a WebSocket client (such as your browser or Autobahn) at
+`http://wikimon.hatnote.com/en/`.
+
+If you'd like to run your own copy of WikiMon, install the
+requirements below, and run the `monitor_websocket.py` command as
+follows:
 
 ```
 usage: monitor_websocket.py [-h] [--project PROJECT] [--lang LANG]
@@ -29,6 +30,13 @@ optional arguments:
     --debug
     --loglevel LOGLEVEL
 ```
+
+### Requirements
+
+ - Twisted==13.0.0
+ - autobahn==0.5.14
+ - [wapiti](https://github.com/mahmoud/wapiti)
+
 
 ## Format
 
