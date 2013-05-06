@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.DEBUG,
 bcast_log = logging.getLogger('bcast_log')
 
 
-DEFAULT_LANG = 'fr'
+DEFAULT_LANG = 'en'
 DEFAULT_PROJECT = 'wikipedia'
 DEFAULT_BCAST_PORT = 9000
 
