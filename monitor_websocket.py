@@ -208,7 +208,8 @@ def create_parser():
     prs.add_argument('--port', default=DEFAULT_BCAST_PORT, type=int,
                      help='listen port for websocket connections')
     prs.add_argument('--debug', default=DEBUG, action='store_true')
-    prs.add_argument('--loglevel', default='WARN')
+    prs.add_argument('--loglevel', default='WARN',
+                     help='e.g., DEBUG, INFO, WARN, etc.')
     return prs
 
 
@@ -216,7 +217,7 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     try:
-        bcast_log.setLevel(getattr(logging, args.loglevel))
+        bcast_log.setLevel(getattr(logging, args.loglevel.upper()))
     except:
         print 'warning: invalid log level'
         bcast_log.setLevel(logging.WARN)
