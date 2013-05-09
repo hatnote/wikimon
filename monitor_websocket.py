@@ -84,7 +84,7 @@ class Monitor(irc.IRCClient):
         try:
             msg = msg.decode('utf-8')
         except UnicodeError as ue:
-            bcast_log.warn('UnicodeError: %r on IRC message %r', (ue, msg))
+            bcast_log.warn('UnicodeError: %r on IRC message %r', ue, msg)
             return
         rc = process_message(msg)
         rc['is_new'] = False
@@ -194,7 +194,7 @@ def start_monitor(broadcaster, lang=DEFAULT_LANG, project=DEFAULT_PROJECT):
     wc = wapiti.WapitiClient('wikimon@hatnote.com', api_url=api_url)
     page_info = wc.get_source_info()
     nmns = [ns.title for ns in page_info[0].namespace_map if ns.title]
-    bcast_log.info('connecting to %s...' % channel)
+    bcast_log.info('connecting to %s...', channel)
     f = MonitorFactory(channel, broadcaster, nmns)
     reactor.connectTCP("irc.wikimedia.org", 6667, f)
 
@@ -216,7 +216,7 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     try:
-        bcast_log.setLevel(getattr(logging, args.loglevel))
+        bcast_log.setLevel(getattr(logging, args.loglevel.upper()))
     except:
         print 'warning: invalid log level'
         bcast_log.setLevel(logging.WARN)
