@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.DEBUG,
 bcast_log = logging.getLogger('bcast_log')
 
 
-DEFAULT_LANG = 'fr'
+DEFAULT_LANG = 'en'
 DEFAULT_PROJECT = 'wikipedia'
 DEFAULT_BCAST_PORT = 9000
 
@@ -208,7 +208,8 @@ def create_parser():
     prs.add_argument('--port', default=DEFAULT_BCAST_PORT, type=int,
                      help='listen port for websocket connections')
     prs.add_argument('--debug', default=DEBUG, action='store_true')
-    prs.add_argument('--loglevel', default='WARN')
+    prs.add_argument('--loglevel', default='WARN',
+                     help='e.g., DEBUG, INFO, WARN, etc.')
     return prs
 
 
