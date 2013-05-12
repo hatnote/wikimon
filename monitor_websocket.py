@@ -1,14 +1,20 @@
 # some code from Twisted Matrix's irc_test.py
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
+from twisted.web.client import getPage
+from twisted.python.util import println
 from autobahn.websocket import (WebSocketServerFactory,
                                 WebSocketServerProtocol,
                                 listenWS)
 import re
+import socket
+
 import wapiti
-from json import dumps
+from json import dumps, loads
 
 DEBUG = False
+
+LOCAL_GEOIP = 'http://localhost:7999'
 
 import logging
 logging.basicConfig(level=logging.DEBUG,
@@ -58,12 +64,70 @@ NON_MAIN_NS = ['Talk',
                'Media']
 
 
-def process_message(message):
+def is_ip(addr):
+    try:
+        socket.inet_aton(addr)
+    except Exception:
+        return False
+    return True
+
+
+def build_geo_msg_dict(msg_dict, geo_json):
+    geo_dict = loads(geo_json)
+    msg_dict['geo_ip'] = geo_dict
+    return msg_dict
+
+
+def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
     no_color = COLOR_RE.sub('', message)
     ret = PARSE_EDIT_RE.match(no_color)
+    msg_dict = {'is_new': False,
+                'is_bot': False,
+                'is_unpatrolled': False,
+                'is_anon': False}
     if ret:
-        return ret.groupdict()
-    return {}
+        msg_dict.update(ret.groupdict())
+    else:
+        msg_dict = {}
+    '''
+    Special logs:
+    - Special:Log/abusefilter
+    - Special:Log/block
+    - Special:Log/newusers
+    - Special:Log/move
+    - Special:Log/pagetriage-curation
+    - Special:Log/delete
+    - Special:Log/upload
+    - Special:Log/patrol
+    '''
+    ns, _, title = msg_dict['page_title'].rpartition(':')
+    if ns not in non_main_ns:
+        msg_dict['ns'] = 'Main'
+    else:
+        msg_dict['ns'] = ns
+    flags = msg_dict.get('flags') or ''
+
+    msg_dict['is_new'] = 'N' in flags
+    msg_dict['is_bot'] = 'B' in flags
+    msg_dict['is_minor'] = 'M' in flags
+    msg_dict['is_unpatrolled'] = '!' in flags
+    
+    username = msg_dict.get('user')
+    is_anon = is_ip(username)
+
+    if is_anon:
+        msg_dict['is_anon'] = True
+        
+        if bcast_callback:
+            try:
+                geo_url = str(LOCAL_GEOIP + '/json/' + username)
+            except UnicodeError:
+                pass
+            else:
+                getPage(geo_url).addCallbacks(
+                    callback=lambda geo_json: bcast_callback(build_geo_msg_dict(msg_dict, geo_json)),
+                    errback=lambda error: bcast_log.error("could not fetch from local geoip", error))
+    return msg_dict
 
 
 class Monitor(irc.IRCClient):
@@ -86,40 +150,15 @@ class Monitor(irc.IRCClient):
         except UnicodeError as ue:
             bcast_log.warn('UnicodeError: %r on IRC message %r', ue, msg)
             return
-        rc = process_message(msg)
-        rc['is_new'] = False
-        rc['is_bot'] = False
-        rc['is_minor'] = False
-        rc['is_unpatrolled'] = False
-        rc['is_anon'] = False
-        '''
-        Special logs:
-            - Special:Log/abusefilter
-            - Special:Log/block
-            - Special:Log/newusers
-            - Special:Log/move
-            - Special:Log/pagetriage-curation
-            - Special:Log/delete
-            - Special:Log/upload
-            - Special:Log/patrol
-        '''
-        ns, _, title = rc['page_title'].rpartition(':')
-        if ns not in self.non_main_ns:
-            rc['ns'] = 'Main'
-        else:
-            rc['ns'] = ns
-        if rc['flags'] and 'N' in rc['flags']:
-            rc['is_new'] = True
-        if rc['flags'] and 'B' in rc['flags']:
-            rc['is_bot'] = True
-        if rc['flags'] and 'M' in rc['flags']:
-            rc['is_minor'] = True
-        if rc['flags'] and '!' in rc['flags']:
-            rc['is_unpatrolled'] = True
-        if rc['user'] and sum([a.isdigit() for a in rc['user'].split('.')]) == 4:
-            rc['is_anon'] = True
+        msg_dict = process_message(msg, 
+                                   self.non_main_ns, 
+                                   self._bc_callback)
+
+    def _bc_callback(self, msg_dict):
         # Which revisions to broadcast?
-        self.broadcaster.broadcast(dumps(rc))
+        json_msg_dict = dumps(msg_dict)
+        self.broadcaster.broadcast(json_msg_dict)
+        
 
 
 class MonitorFactory(protocol.ClientFactory):
