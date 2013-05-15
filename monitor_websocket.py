@@ -110,7 +110,7 @@ def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
 
     def report_failure_broadcast(error):
         bcast_log.debug("could not fetch from local geoip: %s", error)
-        broadcast('null')
+        broadcast(msg_dict)
 
     def broadcast(geo_json):
         geo_dict = loads(geo_json)
