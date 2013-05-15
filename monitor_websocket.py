@@ -2,7 +2,6 @@
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
 from twisted.web.client import getPage
-from twisted.python.util import println
 from autobahn.websocket import (WebSocketServerFactory,
                                 WebSocketServerProtocol,
                                 listenWS)
@@ -72,12 +71,6 @@ def is_ip(addr):
     return True
 
 
-def build_geo_msg_dict(msg_dict, geo_json):
-    geo_dict = loads(geo_json)
-    msg_dict['geo_ip'] = geo_dict
-    return msg_dict
-
-
 def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
     no_color = COLOR_RE.sub('', message)
     ret = PARSE_EDIT_RE.match(no_color)
@@ -111,13 +104,22 @@ def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
     msg_dict['is_bot'] = 'B' in flags
     msg_dict['is_minor'] = 'M' in flags
     msg_dict['is_unpatrolled'] = '!' in flags
-    
+
     username = msg_dict.get('user')
     is_anon = is_ip(username)
 
+    def report_failure_broadcast(error):
+        bcast_log.debug("could not fetch from local geoip: %s", error)
+        broadcast('null')
+
+    def broadcast(geo_json):
+        geo_dict = loads(geo_json)
+        msg_dict['geo_ip'] = geo_dict
+        bcast_callback(msg_dict)
+
     if is_anon:
         msg_dict['is_anon'] = True
-        
+
         if bcast_callback:
             try:
                 geo_url = str(LOCAL_GEOIP + '/json/' + username)
@@ -125,15 +127,16 @@ def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
                 pass
             else:
                 getPage(geo_url).addCallbacks(
-                    callback=lambda geo_json: bcast_callback(build_geo_msg_dict(msg_dict, geo_json)),
-                    errback=lambda error: bcast_log.error("could not fetch from local geoip", error))
+                    callback=broadcast,
+                    errback=report_failure_broadcast)
     return msg_dict
 
 
 class Monitor(irc.IRCClient):
-    def __init__(self, bsf, nmns):
+    def __init__(self, bsf, nmns, factory):
         self.broadcaster = bsf
         self.non_main_ns = nmns
+        self.factory = factory
         bcast_log.info('created IRC monitor...')
 
     def connectionMade(self):
@@ -150,27 +153,37 @@ class Monitor(irc.IRCClient):
         except UnicodeError as ue:
             bcast_log.warn('UnicodeError: %r on IRC message %r', ue, msg)
             return
-        msg_dict = process_message(msg, 
-                                   self.non_main_ns, 
-                                   self._bc_callback)
+        process_message(msg, self.non_main_ns, self._bc_callback)
 
     def _bc_callback(self, msg_dict):
         # Which revisions to broadcast?
         json_msg_dict = dumps(msg_dict)
         self.broadcaster.broadcast(json_msg_dict)
-        
 
 
-class MonitorFactory(protocol.ClientFactory):
+
+class MonitorFactory(protocol.ReconnectingClientFactory):
     def __init__(self, channel, bsf, nmns=NON_MAIN_NS):
         self.channel = channel
         self.bsf = bsf
         self.nmns = nmns
 
     def buildProtocol(self, addr):
-        p = Monitor(self.bsf, self.nmns)
-        p.factory = self
-        return p
+        bcast_log.debug('Monitor IRC connected')
+        self.resetDelay()
+        return Monitor(self.bsf, self.nmns, self)
+
+    def startConnecting(self, connector):
+        bcast_log.debug('Monitor IRC starting connection')
+        protocol.startConnecting(self, connector)
+
+    def clientConnectionLost(self, connector, reason):
+        bcast_log.debug('Lost Monitor IRC connection: %s', reason)
+        protocol.ReconnectingClientFactory.clientConnectionLost(self, connector, reason)
+
+    def clientConnectionFailed(self, connector, reason):
+        bcast_log.error('Failed Monitor IRC connection: %s', reason)
+        protocol.ReconnectingClientFactory.clientConnectionFailed(self, connector, reason)
 
 
 class BroadcastServerProtocol(WebSocketServerProtocol):
