@@ -132,6 +132,8 @@ def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
             else:
                 getPage(geo_url).addCallbacks(callback=broadcast,
                                               errback=report_failure_broadcast)
+    elif bcast_callback:
+        broadcast()
     return msg_dict
 
 
