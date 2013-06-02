@@ -96,7 +96,8 @@ def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
     - Special:Log/upload
     - Special:Log/patrol
     '''
-    ns, _, title = msg_dict['page_title'].rpartition(':')
+    top_level_title, _, _ = msg_dict['page_title'].partition('/')
+    ns, _, title = top_level_title.rpartition(':')
     if ns not in non_main_ns:
         msg_dict['ns'] = 'Main'
     else:
