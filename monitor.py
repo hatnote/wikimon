@@ -1,4 +1,14 @@
-# some code from Twisted Matrix's irc_test.py
+# -*- coding: utf-8 -*-
+"""
+Note that this is just a super-simplified example should someone
+want a half-decent starting-point for making a monitor with its own
+publishing paradigm.
+
+While based on this, monitor_websocket.py has a lot more behavior than
+this these days.
+"""
+
+
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
 import time, sys, re, datetime
