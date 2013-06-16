@@ -102,8 +102,13 @@ def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
         msg_dict['ns'] = 'Main'
     else:
         msg_dict['ns'] = ns
-    flags = msg_dict.get('flags') or ''
 
+    try:
+        msg_dict['change_size'] = int(msg_dict['change_size'])
+    except:
+        msg_dict['change_size'] = None
+
+    flags = msg_dict.get('flags') or ''
     msg_dict['is_new'] = 'N' in flags
     msg_dict['is_bot'] = 'B' in flags
     msg_dict['is_minor'] = 'M' in flags
