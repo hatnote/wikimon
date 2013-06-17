@@ -1,4 +1,10 @@
-# some code from Twisted Matrix's irc_test.py
+# -*- coding: utf-8 -*-
+
+import re
+import socket
+from json import dumps, loads
+from urlparse import parse_qsl
+
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
 from twisted.internet.protocol import ReconnectingClientFactory
@@ -6,11 +12,9 @@ from twisted.web.client import getPage
 from autobahn.websocket import (WebSocketServerFactory,
                                 WebSocketServerProtocol,
                                 listenWS)
-import re
-import socket
 
 import wapiti
-from json import dumps, loads
+
 
 DEBUG = False
 
@@ -74,6 +78,23 @@ def is_ip(addr):
     return True
 
 
+def parse_revs_from_url(url):
+    """
+    Parse and return parent_rev_id, rev_id (old, new) from a URL such as:
+
+    http://en.wikipedia.org/w/index.php?diff=560171723&oldid=558167099
+
+    Raises a ValueError on any exception encountered in the process.
+    """
+    try:
+        _, _, query_str = url.partition('?')
+        qdict = dict(parse_qsl(query_str))
+        # confusingly, I think oldid is actually the current rev id
+        return qdict.get('diff'), qdict['oldid']
+    except:
+        raise ValueError('unparseable url: %r' % (url,))
+
+
 def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
     no_color = COLOR_RE.sub('', message)
     ret = PARSE_EDIT_RE.match(no_color)
@@ -107,6 +128,13 @@ def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
         msg_dict['change_size'] = int(msg_dict['change_size'])
     except:
         msg_dict['change_size'] = None
+
+    msg_dict['action'] = 'edit'
+    try:
+        p_rev_id, rev_id = parse_revs_from_url(msg_dict['url'])
+        msg_dict['parent_rev_id'], msg_dict['rev_id'] = p_rev_id, rev_id
+    except ValueError:
+        msg_dict['action'] = msg_dict.pop('url', None)
 
     flags = msg_dict.get('flags') or ''
     msg_dict['is_new'] = 'N' in flags
@@ -168,7 +196,7 @@ class Monitor(irc.IRCClient):
 
     def _bc_callback(self, msg_dict):
         # Which revisions to broadcast?
-        json_msg_dict = dumps(msg_dict)
+        json_msg_dict = dumps(msg_dict, sort_keys=True)
         self.broadcaster.broadcast(json_msg_dict)
 
 
