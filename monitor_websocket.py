@@ -71,11 +71,23 @@ NON_MAIN_NS = ['Talk',
 
 
 def is_ip(addr):
+    """
+    >>> is_ip('::1')
+    True
+    >>> is_ip('192.168.1.1')
+    True
+    >>> is_ip('unacceptabllllle')
+    False
+    """
+    ret = True
     try:
-        socket.inet_aton(addr)
-    except Exception:
-        return False
-    return True
+        socket.inet_pton(socket.AF_INET, addr)
+    except socket.error:
+        try:
+            socket.inet_pton(socket.AF_INET6, addr)
+        except socket.error:
+            ret = False
+    return ret
 
 
 def parse_revs_from_url(url):
