@@ -28,7 +28,7 @@
     }
 
     if ('WebSocket' in window) {
-      var connection = new ReconnectingWebSocket(ws_url);
+      var connection = new WebSocket(ws_url);
       this.connection = connection;
 
       connection.onopen = function() {
@@ -69,12 +69,15 @@
     $('#limit').val(LIMIT);
     wikipediaSocket.init(EXAMPLE_URL, EXAMPLE_LID);
 
-    $('#submit').on('click', function() {
+    $('#connect').on('click', function() {
       var url = $('#url').val();
       LIMIT = $('#limit').val();
       wikipediaSocket.close();
-      wikipediaSocket.init(url, 'testing');
+      wikipediaSocket.init(url, EXAMPLE_LID);
     });
+    $('#disconnect').on('click', function() {
+      wikipediaSocket.close();
+    })
   });
 
   </script>
@@ -86,17 +89,21 @@
       list-style-type: none;
       background-color: #F0F0F0;
     }
+    .status {
+      background-color: #F0F0F0;
+      font-family: monospace;
+    }
   </style>
 </head>
 <body>
   <h1>Test Wikimon Client</h1>
   <p>
-    <strong>Status</strong>: <span class="status"></span>
-  </p>
-  <p>
     <label for="url">URL:</lable> <input type="text" id="url" name="url"> <label for="limit">Display limit:</lable> <input type="text" id="limit" name="limit" size=3> (null for unlimited)
   </p>
-  <button id="submit">Re-connect</button>
+  <p><button id="connect">Connect</button> <button id="disconnect">Disconnect</button></p>
+  <p>
+    <strong>Status</strong>: <span class="status"></span>
+  </p>
   <ul id="rc-log"></ul>
 </body>
 </html>
