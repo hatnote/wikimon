@@ -6,7 +6,7 @@
 
   var EXAMPLE_URL = 'ws://localhost:9000';
   var EXAMPLE_LID = 'testing';
-  var LIMIT = 3;
+  var LIMIT = 20;
 
   var log_rc = function(rc_str, limit) {
     $('#rc-log').prepend('<li>' + rc_str + '</li>')
@@ -96,9 +96,9 @@
   </style>
 </head>
 <body>
-  <h1>Test Wikimon Client</h1>
+  <h1>Wikimon Test Client</h1>
   <p>
-    <label for="url">URL:</label> <input type="text" id="url" name="url"> <label for="limit">Display limit:</lable> <input type="text" id="limit" name="limit" size=3> (null for unlimited)
+    <label for="url">URL:</label> <input type="text" id="url" name="url" /> <label for="limit">Display limit:</label> <input type="text" id="limit" name="limit" size=3 /> (blank for unlimited)
   </p>
   <p><button id="connect">Connect</button> <button id="disconnect">Disconnect</button></p>
   <p>
