@@ -83,6 +83,7 @@ def parse_revs_from_url(url):
 
 
 def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
+    message = message.replace('\x02', '')
     no_color = COLOR_RE.sub('', message)
     no_color = no_color.strip()
     ret = PARSE_EDIT_RE.match(no_color)
