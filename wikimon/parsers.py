@@ -82,11 +82,16 @@ def parse_revs_from_url(url):
         raise ValueError('unparsable url: %r' % (url,))
 
 
-def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
+def clean_irc_markup(message):
     message = message.replace('\x02', '')
     no_color = COLOR_RE.sub('', message)
     no_color = no_color.strip()
-    ret = PARSE_EDIT_RE.match(no_color)
+    return no_color
+
+
+def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
+    clean_message = clean_irc_markup(message)
+    ret = PARSE_EDIT_RE.match(clean_message)
     msg_dict = {'is_new': False,
                 'is_bot': False,
                 'is_unpatrolled': False,
