@@ -17,7 +17,7 @@ from setuptools import setup
 
 
 __author__ = 'Mahmoud Hashemi and Stephen LaPorte'
-__version__ = '0.5.0'
+__version__ = '0.5.2'
 __contact__ = 'mahmoudrhashemi@gmail.com'
 __url__ = 'https://github.com/hatnote/wikimon'
 __license__ = 'GPLv3'
