@@ -112,7 +112,7 @@ def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
     - Special:Log/patrol
     '''
     top_level_title, _, _ = msg_dict['page_title'].partition('/')
-    ns, _, title = top_level_title.rpartition(':')
+    ns, _, _ = top_level_title.partition(':')
     if ns not in non_main_ns:
         msg_dict['ns'] = 'Main'
     else:
