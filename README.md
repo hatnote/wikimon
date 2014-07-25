@@ -75,6 +75,18 @@ As you can see, the set of keys sent is always the same. Note that the
 `flags` key is redundant, as it is parsed out into `is_minor`,
 `is_bot`, `is_unpatrolled`, and `is_new`.
 
+## Geolocation
+
+Geolocation is currently done through a local FreeGeoIP
+instance. FreeGeoIP requires Go and several Go libraries. It also
+requires memcached to be running on port 11211.
+
+The command used to run FreeGeoIP at the moment:
+
+```
+GOPATH=/home/hatnote/gopkg/ GOROOT=/home/hatnote/go nohup /home/hatnote/go/bin/go run freegeoip.go &
+```
+
 
 ## See also
 
