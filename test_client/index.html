@@ -1,62 +1,109 @@
 <html>
 <head>
-    <script src='jquery-1.9.1.min.js'></script>
-    <script src="reconnecting-websocket.min.js" type="text/javascript"></script>
-    <script>
-    var log_rc = function(rc_str, limit) {
-        $('#rc-log').prepend('<li>' + rc_str + '</li>')
-        if (limit) {
-            if ($('#rc-list li').length > limit) {
-                $('#rc-list li').slice(limit, limit + 1).remove();
-            }
-        }
-    };
+  <script src='jquery-1.9.1.min.js'></script>
+  <script src="reconnecting-websocket.min.js" type="text/javascript"></script>
+  <script>
 
-    function enWikipediaSocket() {
+  var EXAMPLE_URL = 'ws://localhost:9000';
+  var EXAMPLE_LID = 'testing';
+  var LIMIT = 20;
 
-    };
+  var log_rc = function(rc_str, limit) {
+    $('#rc-log').prepend('<li>' + rc_str + '</li>')
+    if (limit) {
+      if ($('#rc-log li').length > limit) {
+        $('#rc-log li').slice(limit, limit + 1).remove();
+      }
+    }
+  };
 
-    enWikipediaSocket.init = function() {
-        // Terminate previous connection, if any
-        if (this.connection)
-          this.connection.close();
+  function wikipediaSocket() {
 
-        if ('WebSocket' in window) {
-            var connection = new ReconnectingWebSocket('ws://localhost:9000');
-            this.connection = connection;
+  };
 
-            connection.onopen = function() {
-                console.log('Connection open!');
-            };
+  wikipediaSocket.init = function(ws_url, lid) {
+    // Terminate previous connection, if any
+    if (this.connection) {
+      this.connection.close();
+    }
 
-            connection.onclose = function() {
-                console.log('Connection closed ...')
-            };
+    if ('WebSocket' in window) {
+      var connection = new WebSocket(ws_url);
+      this.connection = connection;
 
-            connection.onerror = function(error) {
-                console.log('Connection Error: ' + error);
-            };
+      connection.onopen = function() {
+        var msg = 'Connection open to ' + ws_url;
+        console.log(msg);
+        $('span.status').html(msg)
+      };
 
-            connection.onmessage = function(resp) {
-                var data = JSON.parse(resp.data);
-                var rc_str = '"<a href="' + data.url + '">' + data.page_title + '</a>" was edited by ' + data.user + ' (' + data.change_size + ')'
-                log_rc(rc_str, null)
+      connection.onclose = function() {
+        var msg = 'Connection closed to ' + ws_url;
+        console.log(msg);
+        $('span.status').html(msg);
+      };
 
-            };
-        }
-    };
+      connection.onerror = function(error) {
+        var msg = 'Connection Error: ' + error;
+        console.log(msg);
+        $('span.status').html(msg)
+      };
 
-    enWikipediaSocket.close = function() {
-        if (this.connection) {
-            this.connection.close();
-        }
-    };
-    enWikipediaSocket.init();
-    </script>
+      connection.onmessage = function(resp) {
+        var data = JSON.parse(resp.data);
+        var data_str = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+        log_rc(data_str, LIMIT)
+
+      };
+    }
+  };
+
+  wikipediaSocket.close = function() {
+    if (this.connection) {
+      this.connection.close();
+    }
+  };
+
+  $(function() {
+    $('#url').val(EXAMPLE_URL);
+    $('#limit').val(LIMIT);
+    wikipediaSocket.init(EXAMPLE_URL, EXAMPLE_LID);
+
+    $('#connect').on('click', function() {
+      var url = $('#url').val();
+      LIMIT = $('#limit').val();
+      wikipediaSocket.close();
+      wikipediaSocket.init(url, EXAMPLE_LID);
+    });
+    $('#disconnect').on('click', function() {
+      wikipediaSocket.close();
+    })
+  });
+
+  </script>
+  <style>
+    ul {
+      padding: 0;
+    }
+    li {
+      list-style-type: none;
+      background-color: #F0F0F0;
+    }
+    .status {
+      background-color: #F0F0F0;
+      font-family: monospace;
+    }
+  </style>
 </head>
 <body>
-    <h1>Test client</h1>
-    <ul id='rc-log'>
-    </ul>
+  <h1>Wikimon Test Client</h1>
+  <p>
+    <label for="url">URL:</label> <input type="text" id="url" name="url" /> <label for="limit">Display limit:</label> <input type="text" id="limit" name="limit" size=3 /> (blank for unlimited)
+  </p>
+  <p><button id="connect">Connect</button> <button id="disconnect">Disconnect</button></p>
+  <p>
+    <strong>Status</strong>: <span class="status"></span>
+  </p>
+  <ul id="rc-log"></ul>
 </body>
 </html>
