@@ -1,4 +1,4 @@
 -e git+https://github.com/mahmoud/wapiti.git#egg=wapiti
 
-Twisted==13.0.0
+Twisted>=13.1.0
 autobahn==0.5.14

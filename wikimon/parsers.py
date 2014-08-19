@@ -5,8 +5,6 @@ import socket
 from urlparse import parse_qsl
 
 
-COLOR_RE = re.compile(r"\x03(?:\d{1,2}(?:,\d{1,2})?)?",
-                      re.UNICODE)  # remove IRC color codes
 PARSE_EDIT_RE = re.compile(r'(\[\[(?P<page_title>.*?)\]\])'
                            r' +((?P<flags>[A-Z\!]+) )?'
                            r'(?P<url>\S*)'
@@ -82,16 +80,8 @@ def parse_revs_from_url(url):
         raise ValueError('unparsable url: %r' % (url,))
 
 
-def clean_irc_markup(message):
-    message = message.replace('\x02', '')
-    no_color = COLOR_RE.sub('', message)
-    no_color = no_color.strip()
-    return no_color
-
-
 def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
-    clean_message = clean_irc_markup(message)
-    ret = PARSE_EDIT_RE.match(clean_message)
+    ret = PARSE_EDIT_RE.match(message)
     msg_dict = {'is_new': False,
                 'is_bot': False,
                 'is_unpatrolled': False,
