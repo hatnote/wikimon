@@ -2,3 +2,6 @@
 
 Twisted>=13.1.0
 autobahn==0.5.14
+pytest==2.6.1
+python-geoip==0.3.1
+python-geoip-geolite2

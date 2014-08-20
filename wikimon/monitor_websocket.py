@@ -1,24 +1,23 @@
 # -*- coding: utf-8 -*-
 
 
-from json import dumps, loads
+from json import dumps
 
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
 from twisted.internet.protocol import ReconnectingClientFactory
-from twisted.web.client import getPage
 from autobahn.websocket import (WebSocketServerFactory,
                                 WebSocketServerProtocol,
                                 listenWS)
 
 import wapiti
 
+from geoip import geolite2
+
 from parsers import parse_irc_message
 
 
 DEBUG = False
-
-LOCAL_GEOIP = 'http://localhost:7999'
 
 import logging
 logging.basicConfig(level=logging.DEBUG,
@@ -62,33 +61,6 @@ NON_MAIN_NS = ['Talk',
                'Media']
 
 
-def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
-    msg_dict = parse_irc_message(message, non_main_ns)
-
-    def broadcast(geo_json=None):
-        if geo_json is not None:
-            geo_dict = loads(geo_json)
-            msg_dict['geo_ip'] = geo_dict
-        bcast_callback(msg_dict)
-
-    def report_failure_broadcast(error):
-        bcast_log.debug("could not fetch from local geoip: %s", error)
-        broadcast()
-
-    if msg_dict['is_anon']:
-        if bcast_callback:
-            try:
-                geo_url = str(LOCAL_GEOIP + '/json/' + msg_dict['user'])
-            except UnicodeError:
-                pass
-            else:
-                getPage(geo_url).addCallbacks(callback=broadcast,
-                                              errback=report_failure_broadcast)
-    elif bcast_callback:
-        broadcast()
-    return msg_dict
-
-
 def strip_colors(msg):
     def _extract(formatted):
         if not hasattr(formatted, 'children'):
@@ -98,7 +70,43 @@ def strip_colors(msg):
     return _extract(irc.parseFormattedText(msg))
 
 
+def geolocated_anonymous_user(parsed, lang='en', _geolite2=geolite2):
+    geo_loc = {}
+
+    localized = ['names', lang]
+    info_to_geoloc = {'country_name': ['country'] + localized,
+                      'latitude': ['location', 'latitude'],
+                      'longitude': ['location', 'longitude'],
+                      'region_name': ['subdivisions', 0] + localized,
+                      'city': ['city'] + localized}
+
+    if not parsed.get('is_anon'):
+        return geo_loc
+    ip = parsed['user']
+    try:
+        result = _geolite2.lookup(ip)
+    except Exception:
+        bcast_log.exception('geoip lookup failed for %r', ip)
+        return geo_loc
+
+    info = result.get_info_dict()
+
+    for dst, src_items in info_to_geoloc.items():
+        cursor = info
+        for src in src_items:
+            try:
+                cursor = cursor[src]
+            except (KeyError, IndexError):
+                cursor = None
+                break
+        geo_loc[dst] = cursor
+
+    return geo_loc
+
+
 class Monitor(irc.IRCClient):
+    GEO_IP_KEY = 'geo_ip'
+
     def __init__(self, bsf, nmns, factory):
         self.broadcaster = bsf
         self.non_main_ns = nmns
@@ -115,17 +123,19 @@ class Monitor(irc.IRCClient):
 
     def privmsg(self, user, channel, msg):
         msg = strip_colors(msg)
+
         try:
             msg = msg.decode('utf-8')
         except UnicodeError as ue:
             bcast_log.warn('UnicodeError: %r on IRC message %r', ue, msg)
             return
-        process_message(msg, self.non_main_ns, self._bc_callback)
 
-    def _bc_callback(self, msg_dict):
-        # Which revisions to broadcast?
-        json_msg_dict = dumps(msg_dict, sort_keys=True)
-        self.broadcaster.broadcast(json_msg_dict)
+        parsed = parse_irc_message(msg, NON_MAIN_NS)
+        geo_loc = geolocated_anonymous_user(parsed)
+        if geo_loc:
+            parsed[self.GEO_IP_KEY] = geo_loc
+            # Which revisions to broadcast?
+        self.broadcaster.broadcast(dumps(parsed, sort_keys=True))
 
 
 class MonitorFactory(ReconnectingClientFactory):
