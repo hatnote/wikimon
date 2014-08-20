@@ -89,6 +89,15 @@ def process_message(message, non_main_ns=NON_MAIN_NS, bcast_callback=None):
     return msg_dict
 
 
+def strip_colors(msg):
+    def _extract(formatted):
+        if not hasattr(formatted, 'children'):
+            return formatted
+        return ''.join(map(_extract, formatted.children))
+
+    return _extract(irc.parseFormattedText(msg))
+
+
 class Monitor(irc.IRCClient):
     def __init__(self, bsf, nmns, factory):
         self.broadcaster = bsf
@@ -105,6 +114,7 @@ class Monitor(irc.IRCClient):
         irc_log.info('joined %s ...', self.factory.channel)
 
     def privmsg(self, user, channel, msg):
+        msg = strip_colors(msg)
         try:
             msg = msg.decode('utf-8')
         except UnicodeError as ue:
