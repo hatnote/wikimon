@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-
 from json import dumps
 
 from twisted.words.protocols import irc
@@ -11,15 +10,17 @@ from autobahn.websocket import (WebSocketServerFactory,
                                 listenWS)
 
 import wapiti
-
-from geoip import geolite2
-
 from parsers import parse_irc_message
+import monitor_geolite2
 
 
 DEBUG = False
 
 import logging
+from twisted.python.log import PythonLoggingObserver
+observer = PythonLoggingObserver()
+observer.start()
+
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s\t%(name)s\t %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S')
@@ -70,7 +71,7 @@ def strip_colors(msg):
     return _extract(irc.parseFormattedText(msg))
 
 
-def geolocated_anonymous_user(parsed, lang='en', _geolite2=geolite2):
+def geolocated_anonymous_user(geoip_db, parsed, lang='en'):
     geo_loc = {}
 
     localized = ['names', lang]
@@ -84,7 +85,9 @@ def geolocated_anonymous_user(parsed, lang='en', _geolite2=geolite2):
         return geo_loc
     ip = parsed['user']
     try:
-        result = _geolite2.lookup(ip)
+        result = geoip_db.lookup(ip)
+        if not result:
+            return geo_loc
     except Exception:
         bcast_log.exception('geoip lookup failed for %r', ip)
         return geo_loc
@@ -107,7 +110,8 @@ def geolocated_anonymous_user(parsed, lang='en', _geolite2=geolite2):
 class Monitor(irc.IRCClient):
     GEO_IP_KEY = 'geo_ip'
 
-    def __init__(self, bsf, nmns, factory):
+    def __init__(self, geoip_db_monitor, bsf, nmns, factory):
+        self.geoip_db_monitor = geoip_db_monitor
         self.broadcaster = bsf
         self.non_main_ns = nmns
         self.factory = factory
@@ -131,7 +135,9 @@ class Monitor(irc.IRCClient):
             return
 
         parsed = parse_irc_message(msg, NON_MAIN_NS)
-        geo_loc = geolocated_anonymous_user(parsed)
+        bcast_log.info(self.geoip_db_monitor.geoip_db)
+        geo_loc = geolocated_anonymous_user(self.geoip_db_monitor.geoip_db,
+                                            parsed)
         if geo_loc:
             parsed[self.GEO_IP_KEY] = geo_loc
             # Which revisions to broadcast?
@@ -139,7 +145,8 @@ class Monitor(irc.IRCClient):
 
 
 class MonitorFactory(ReconnectingClientFactory):
-    def __init__(self, channel, bsf, nmns=NON_MAIN_NS):
+    def __init__(self, geoip_db_monitor, channel, bsf, nmns=NON_MAIN_NS):
+        self.geoip_db_monitor = geoip_db_monitor
         self.channel = channel
         self.bsf = bsf
         self.nmns = nmns
@@ -147,7 +154,7 @@ class MonitorFactory(ReconnectingClientFactory):
     def buildProtocol(self, addr):
         irc_log.info('monitor IRC connected to %s', self.channel)
         self.resetDelay()
-        return Monitor(self.bsf, self.nmns, self)
+        return Monitor(self.geoip_db_monitor, self.bsf, self.nmns, self)
 
     def startConnecting(self, connector):
         irc_log.info('monitor IRC starting connection to %s', self.channel)
@@ -159,7 +166,8 @@ class MonitorFactory(ReconnectingClientFactory):
 
     def clientConnectionFailed(self, connector, reason):
         irc_log.error('failed monitor IRC connection: %s', reason)
-        ReconnectingClientFactory.clientConnectionFailed(self, connector, reason)
+        ReconnectingClientFactory.clientConnectionFailed(self, connector,
+                                                         reason)
 
 
 class BroadcastServerProtocol(WebSocketServerProtocol):
@@ -176,12 +184,14 @@ class BroadcastServerProtocol(WebSocketServerProtocol):
 
 
 class BroadcastServerFactory(WebSocketServerFactory):
-    def __init__(self, url, lang, project, *a, **kw):
+    def __init__(self, url, geoip_db, geoip_update_interval,
+                 lang, project, *a, **kw):
         WebSocketServerFactory.__init__(self, url, *a, **kw)
         self.clients = set()
         self.tickcount = 0
 
-        start_monitor(self, lang, project)  # blargh
+        start_monitor(self, geoip_db, geoip_update_interval,
+                      lang, project)  # blargh
 
     def tick(self):
         self.tickcount += 1
@@ -215,7 +225,8 @@ class BroadcastPreparedServerFactory(BroadcastServerFactory):
             bcast_log.info("prepared message sent to %s", c.peerstr)
 
 
-def start_monitor(broadcaster, lang=DEFAULT_LANG, project=DEFAULT_PROJECT):
+def start_monitor(broadcaster, geoip_db, geoip_update_interval,
+                  lang=DEFAULT_LANG, project=DEFAULT_PROJECT):
     channel = '%s.%s' % (lang, project)
     api_url = 'http://%s.%s.org/w/api.php' % (lang, project)
     api_log.info('fetching namespaces from %r', api_url)
@@ -224,7 +235,9 @@ def start_monitor(broadcaster, lang=DEFAULT_LANG, project=DEFAULT_PROJECT):
     page_info = wc.get_source_info()
     nmns = [ns.title for ns in page_info[0].namespace_map if ns.title]
     irc_log.info('connecting to %s...', channel)
-    f = MonitorFactory(channel, broadcaster, nmns)
+    geoip_db_monitor = monitor_geolite2.begin(geoip_db,
+                                              geoip_update_interval)
+    f = MonitorFactory(geoip_db_monitor, channel, broadcaster, nmns)
     reactor.connectTCP("irc.wikimedia.org", 6667, f)
 
 
@@ -232,6 +245,12 @@ def get_argparser():
     from argparse import ArgumentParser
     desc = "broadcast realtime edits to a Mediawiki project over websockets"
     prs = ArgumentParser(description=desc)
+    prs.add_argument('geoip_db', help='path to the GeoLite2 database')
+    prs.add_argument('--geoip-update-interval',
+                     default=monitor_geolite2.DEFAULT_INTERVAL,
+                     type=int,
+                     help='how often (in seconds) to check'
+                     ' for updates in the GeoIP db')
     prs.add_argument('--project', default=DEFAULT_PROJECT)
     prs.add_argument('--lang', default=DEFAULT_LANG)
     prs.add_argument('--port', default=DEFAULT_BCAST_PORT, type=int,
@@ -255,6 +274,8 @@ def main():
     factory = ServerFactory(ws_listen_addr,
                             project=args.project,
                             lang=args.lang,
+                            geoip_db=args.geoip_db,
+                            geoip_update_interval=args.geoip_update_interval,
                             debug=DEBUG,
                             debugCodePaths=DEBUG)
     factory.protocol = BroadcastServerProtocol

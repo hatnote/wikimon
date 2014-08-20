@@ -2,7 +2,7 @@ import pytest
 import wikimon.monitor_websocket as MW
 
 
-class fake_infobj(object):
+class FakeInfobj(object):
     def __init__(self, result):
         self.result = result
 
@@ -10,11 +10,14 @@ class fake_infobj(object):
         return self.result
 
 
-class fake_geolite2(object):
-    def __init__(self, result):
-        self.result = fake_infobj(result)
+class FakeGeolite2(object):
+    def __init__(self, result, should_raise=False):
+        self.result = FakeInfobj(result)
+        self.should_raise = should_raise
 
     def lookup(self, ip):
+        if self.should_raise:
+            raise ValueError
         return self.result
 
 
@@ -35,8 +38,8 @@ def test_geolocate_anonymous_user():
                            'longitude': LONG},
               'subdivisions': [{'names': {'en': REGION}}]}
 
-    geo = MW.geolocated_anonymous_user(parsed_message,
-                                       _geolite2=fake_geolite2(result))
+    geo = MW.geolocated_anonymous_user(FakeGeolite2(result),
+                                       parsed_message)
 
     assert geo == expected
 
@@ -46,4 +49,5 @@ def test_geolocate_anonymous_user():
                           {'is_anon': False, 'user': '192.168.1.1'},
                           {'is_anon': True, 'user': 'bad ip'}])
 def test_geolocate_anonymouse_irrelevant_messages(parsed_message):
-    assert not MW.geolocated_anonymous_user(parsed_message)
+    geoip_db = FakeGeolite2({}, should_raise=True)
+    assert not MW.geolocated_anonymous_user(geoip_db, parsed_message)
