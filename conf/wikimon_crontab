@@ -1,0 +1,7 @@
+#### Wikimon GeoIP update
+# Wikimon GeoIP update constants
+GEOIP_UPDATE_SCRIPT=/home/hatnote/wikimon/update_geodb.sh
+GEOIP_UPDATE_LOG=/home/hatnote/wikimon/logs/geodb_update.log
+GEODB_DIR=/home/hatnote/wikimon/geodb/
+
+0 12 * * 3 env GEODB_DIR=$GEODB_DIR $GEOIP_UPDATE_SCRIPT >> $GEOIP_UPDATE_LOG 2>&1
