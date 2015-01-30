@@ -3,7 +3,7 @@
 DB=GeoLite2-City.mmdb
 CUR_MD5=current_geodb.md5
 
-GEODB_DIR=$(readlink -f ${GEODB_DIR-$PWD})
+GEODB_DIR=$(readlink -f ${GEODB_DIR-$PWD/geodb})
 CUR=$GEODB_DIR
 PREV=$GEODB_DIR/prev
 GEODB_TMP=$GEODB_DIR/tmpdl
