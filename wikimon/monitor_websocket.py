@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from json import dumps
+from os.path import dirname, abspath
 
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
@@ -15,6 +16,7 @@ import monitor_geolite2
 
 
 DEBUG = False
+DEFAULT_GEOIP_DB = dirname(dirname(abspath(__file__))) + '/geodb/GeoLite2-City.mmdb'
 
 import logging
 from twisted.python.log import PythonLoggingObserver
@@ -245,7 +247,7 @@ def get_argparser():
     from argparse import ArgumentParser
     desc = "broadcast realtime edits to a Mediawiki project over websockets"
     prs = ArgumentParser(description=desc)
-    prs.add_argument('geoip_db', help='path to the GeoLite2 database')
+    prs.add_argument('--geoip_db', default=None, help='path to the GeoLite2 database')
     prs.add_argument('--geoip-update-interval',
                      default=monitor_geolite2.DEFAULT_INTERVAL,
                      type=int,
@@ -264,6 +266,12 @@ def get_argparser():
 def main():
     parser = get_argparser()
     args = parser.parse_args()
+
+    geoip_db_path = args.geoip_db
+    if not geoip_db_path:
+        print "geoip_db not set, defaulting to %r" % DEFAULT_GEOIP_DB
+        geoip_db_path = DEFAULT_GEOIP_DB
+    open(geoip_db_path).close()  # basic readability check
     try:
         bcast_log.setLevel(getattr(logging, args.loglevel.upper()))
     except:
@@ -274,7 +282,7 @@ def main():
     factory = ServerFactory(ws_listen_addr,
                             project=args.project,
                             lang=args.lang,
-                            geoip_db=args.geoip_db,
+                            geoip_db=geoip_db_path,
                             geoip_update_interval=args.geoip_update_interval,
                             debug=DEBUG,
                             debugCodePaths=DEBUG)
