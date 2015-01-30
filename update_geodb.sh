@@ -1,7 +1,7 @@
 #!/bin/bash
 
 DB=GeoLite2-City.mmdb
-CUR_MD5=current_geodb_md5
+CUR_MD5=current_geodb.md5
 
 GEODB_DIR=$(readlink -f ${GEODB_DIR-$PWD})
 CUR=$GEODB_DIR
