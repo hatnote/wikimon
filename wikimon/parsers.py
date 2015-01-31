@@ -11,6 +11,8 @@ PARSE_EDIT_RE = re.compile(r'(\[\[(?P<page_title>.*?)\]\])'
                            r' +\* (?P<user>.*?)'
                            r' \* (\((?P<change_size>[\+\-][0-9]+)\))?'
                            r' ?(?P<summary>.+)?')
+HASHTAG_RE = re.compile('[＃#]{1}(?P<tag>\w+)', re.UNICODE)
+
 NON_MAIN_NS = ['Talk',
                'User',
                'User talk',
@@ -36,6 +38,8 @@ NON_MAIN_NS = ['Talk',
                'TimedText talk',
                'Module',
                'Module talk',
+               'Draft',
+               'Draft talk',
                'Special',
                'Media']
 
@@ -128,5 +132,10 @@ def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
 
     msg_dict.setdefault('user', None)
     msg_dict['is_anon'] = is_ip(msg_dict['user'])
+
+    if msg_dict['summary']:
+        msg_dict['hashtags'] = HASHTAG_RE.findall(msg_dict['summary'])
+    else:
+        msg_dict['hashtags'] = []
 
     return msg_dict
