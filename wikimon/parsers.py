@@ -11,7 +11,9 @@ PARSE_EDIT_RE = re.compile(r'(\[\[(?P<page_title>.*?)\]\])'
                            r' +\* (?P<user>.*?)'
                            r' \* (\((?P<change_size>[\+\-][0-9]+)\))?'
                            r' ?(?P<summary>.+)?')
-HASHTAG_RE = re.compile('[＃#]{1}(?P<tag>\w+)', re.UNICODE)
+
+# see https://gist.github.com/mahmoud/237eb20108b5805aed5f
+HASHTAG_RE = re.compile("(?:^|\s)[＃#]{1}(\w+)", re.UNICODE)
 
 NON_MAIN_NS = ['Talk',
                'User',
