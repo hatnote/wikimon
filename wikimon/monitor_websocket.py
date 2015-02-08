@@ -277,6 +277,8 @@ def main():
     except:
         print 'warning: invalid log level'
         bcast_log.setLevel(logging.WARN)
+    if args.debug:
+        bcast_log.setLevel(logging.DEBUG)
     ws_listen_addr = 'ws://localhost:%d' % (args.port,)
     ServerFactory = BroadcastServerFactory
     factory = ServerFactory(ws_listen_addr,
@@ -284,7 +286,7 @@ def main():
                             lang=args.lang,
                             geoip_db=geoip_db_path,
                             geoip_update_interval=args.geoip_update_interval,
-                            debug=DEBUG,
+                            debug=DEBUG or args.debug,
                             debugCodePaths=DEBUG)
     factory.protocol = BroadcastServerProtocol
     factory.setProtocolOptions(allowHixie76=True)
