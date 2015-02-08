@@ -14,6 +14,7 @@ PARSE_EDIT_RE = re.compile(r'(\[\[(?P<page_title>.*?)\]\])'
 
 # see https://gist.github.com/mahmoud/237eb20108b5805aed5f
 HASHTAG_RE = re.compile("(?:^|\s)[＃#]{1}(\w+)", re.UNICODE)
+MENTION_RE = re.compile("(?:^|\s)[＠ @]{1}([^\s#<>[\]|{}]+)", re.UNICODE)
 
 NON_MAIN_NS = ['Talk',
                'User',
@@ -137,7 +138,9 @@ def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
 
     if msg_dict['summary']:
         msg_dict['hashtags'] = HASHTAG_RE.findall(msg_dict['summary'])
+        msg_dict['mentions'] = MENTION_RE.findall(msg_dict['summary'])
     else:
         msg_dict['hashtags'] = []
+        msg_dict['mentions'] = []
 
     return msg_dict
