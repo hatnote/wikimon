@@ -181,10 +181,6 @@ class BroadcastServerProtocol(WebSocketServerProtocol):
     def onOpen(self):
         self.factory.register(self)
 
-    def onMessage(self, msg, binary):
-        if not binary:
-            self.factory.broadcast("'%s' from %s" % (msg, self.peerstr))
-
     def connectionLost(self, reason):
         WebSocketServerProtocol.connectionLost(self, reason)
         self.factory.unregister(self)
