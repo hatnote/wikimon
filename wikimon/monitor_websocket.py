@@ -110,6 +110,11 @@ def geolocated_anonymous_user(geoip_db, parsed, lang='en'):
 
 
 class Monitor(irc.IRCClient):
+    # without the `nickname` attribute, the nickname defaults to 'irc'
+    # which conflicts with a lot of other clients out there and
+    # sometimes prevents joining rooms.
+
+    nickname = 'wikimon'
     GEO_IP_KEY = 'geo_ip'
 
     def __init__(self, geoip_db_monitor, bsf, nmns, factory):
