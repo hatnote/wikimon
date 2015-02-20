@@ -45,6 +45,8 @@ NON_MAIN_NS = ['Talk',
                'Draft talk',
                'Special',
                'Media']
+DEFAULT_NS_MAP = dict([(ns, ns) for ns in NON_MAIN_NS])
+DEFAULT_NS_MAP[''] = 'Main'
 
 
 def is_ip(addr):
@@ -87,7 +89,7 @@ def parse_revs_from_url(url):
         raise ValueError('unparsable url: %r' % (url,))
 
 
-def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
+def parse_irc_message(message, ns_map=DEFAULT_NS_MAP):
     ret = PARSE_EDIT_RE.match(message)
     msg_dict = {'is_new': False,
                 'is_bot': False,
@@ -109,11 +111,13 @@ def parse_irc_message(message, non_main_ns=NON_MAIN_NS):
     - Special:Log/patrol
     '''
     top_level_title, _, _ = msg_dict['page_title'].partition('/')
-    ns, _, _ = top_level_title.partition(':')
-    if ns not in non_main_ns:
+    ns, _, title_rem = top_level_title.partition(':')
+    try:
+        msg_dict['ns'] = ns_map[ns]
+        msg_dict['local_ns'] = ns
+    except KeyError:
         msg_dict['ns'] = 'Main'
-    else:
-        msg_dict['ns'] = ns
+        msg_dict['local_ns'] = 'Main'
 
     try:
         msg_dict['change_size'] = int(msg_dict['change_size'])

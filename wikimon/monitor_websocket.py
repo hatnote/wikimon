@@ -34,34 +34,8 @@ api_log = logging.getLogger('api_log')
 DEFAULT_LANG = 'en'
 DEFAULT_PROJECT = 'wikipedia'
 DEFAULT_BCAST_PORT = 9000
-
-NON_MAIN_NS = ['Talk',
-               'User',
-               'User talk',
-               'Wikipedia',
-               'Wikipedia talk',
-               'File',
-               'File talk',
-               'MediaWiki',
-               'MediaWiki talk',
-               'Template',
-               'Template talk',
-               'Help',
-               'Help talk',
-               'Category',
-               'Category talk',
-               'Portal',
-               'Portal talk',
-               'Book',
-               'Book talk',
-               'Education Program',
-               'Education Program talk',
-               'TimedText',
-               'TimedText talk',
-               'Module',
-               'Module talk',
-               'Special',
-               'Media']
+IRC_SERVER_HOST = 'irc.wikimedia.org'
+IRC_SERVER_PORT = 6667
 
 
 def strip_colors(msg):
@@ -73,7 +47,7 @@ def strip_colors(msg):
     return _extract(irc.parseFormattedText(msg))
 
 
-def geolocated_anonymous_user(geoip_db, parsed, lang='en'):
+def geolocate_anonymous_user(geoip_db, ip, lang='en'):
     geo_loc = {}
 
     localized = ['names', lang]
@@ -82,10 +56,6 @@ def geolocated_anonymous_user(geoip_db, parsed, lang='en'):
                       'longitude': ['location', 'longitude'],
                       'region_name': ['subdivisions', 0] + localized,
                       'city': ['city'] + localized}
-
-    if not parsed.get('is_anon'):
-        return geo_loc
-    ip = parsed['user']
     try:
         result = geoip_db.lookup(ip)
         if not result:
@@ -117,10 +87,10 @@ class Monitor(irc.IRCClient):
     nickname = 'wikimon'
     GEO_IP_KEY = 'geo_ip'
 
-    def __init__(self, geoip_db_monitor, bsf, nmns, factory):
+    def __init__(self, geoip_db_monitor, bsf, ns_map, factory):
         self.geoip_db_monitor = geoip_db_monitor
         self.broadcaster = bsf
-        self.non_main_ns = nmns
+        self.ns_map = ns_map
         self.factory = factory
         irc_log.info('created IRC monitor...')
 
@@ -141,27 +111,27 @@ class Monitor(irc.IRCClient):
             bcast_log.warn('UnicodeError: %r on IRC message %r', ue, msg)
             return
 
-        parsed = parse_irc_message(msg, NON_MAIN_NS)
-        bcast_log.info(self.geoip_db_monitor.geoip_db)
-        geo_loc = geolocated_anonymous_user(self.geoip_db_monitor.geoip_db,
-                                            parsed)
-        if geo_loc:
-            parsed[self.GEO_IP_KEY] = geo_loc
-            # Which revisions to broadcast?
-        self.broadcaster.broadcast(dumps(parsed, sort_keys=True))
+        msg_dict = parse_irc_message(msg, self.ns_map)
+        if msg_dict.get('is_anon'):
+            ip = msg_dict['user']
+            geo_loc = geolocate_anonymous_user(self.geoip_db_monitor.geoip_db,
+                                               ip)
+            msg_dict[self.GEO_IP_KEY] = geo_loc
+
+        self.broadcaster.broadcast(dumps(msg_dict, sort_keys=True))
 
 
 class MonitorFactory(ReconnectingClientFactory):
-    def __init__(self, geoip_db_monitor, channel, bsf, nmns=NON_MAIN_NS):
+    def __init__(self, geoip_db_monitor, channel, bsf, ns_map):
         self.geoip_db_monitor = geoip_db_monitor
         self.channel = channel
         self.bsf = bsf
-        self.nmns = nmns
+        self.ns_map = ns_map
 
     def buildProtocol(self, addr):
         irc_log.info('monitor IRC connected to %s', self.channel)
         self.resetDelay()
-        return Monitor(self.geoip_db_monitor, self.bsf, self.nmns, self)
+        return Monitor(self.geoip_db_monitor, self.bsf, self.ns_map, self)
 
     def startConnecting(self, connector):
         irc_log.info('monitor IRC starting connection to %s', self.channel)
@@ -202,7 +172,7 @@ class BroadcastServerFactory(WebSocketServerFactory):
         reactor.callLater(1, self.tick)
 
     def register(self, client):
-        if not client in self.clients:
+        if client not in self.clients:
             bcast_log.info("registered client %s", client.peerstr)
         self.clients.add(client)
 
@@ -236,19 +206,21 @@ def start_monitor(broadcaster, geoip_db, geoip_update_interval,
     wc = wapiti.WapitiClient('wikimon@hatnote.com', api_url=api_url)
     api_log.info('successfully fetched namespaces from %r', api_url)
     page_info = wc.get_source_info()
-    nmns = [ns.title for ns in page_info[0].namespace_map if ns.title]
+    ns_map = dict([(ns.title, ns.canonical)
+                   for ns in page_info[0].namespace_map if ns.title])
     irc_log.info('connecting to %s...', channel)
     geoip_db_monitor = monitor_geolite2.begin(geoip_db,
                                               geoip_update_interval)
-    f = MonitorFactory(geoip_db_monitor, channel, broadcaster, nmns)
-    reactor.connectTCP("irc.wikimedia.org", 6667, f)
+    f = MonitorFactory(geoip_db_monitor, channel, broadcaster, ns_map)
+    reactor.connectTCP(IRC_SERVER_HOST, IRC_SERVER_PORT, f)
 
 
 def get_argparser():
     from argparse import ArgumentParser
     desc = "broadcast realtime edits to a Mediawiki project over websockets"
     prs = ArgumentParser(description=desc)
-    prs.add_argument('--geoip_db', default=None, help='path to the GeoLite2 database')
+    prs.add_argument('--geoip_db', default=None,
+                     help='path to the GeoLite2 database')
     prs.add_argument('--geoip-update-interval',
                      default=monitor_geolite2.DEFAULT_INTERVAL,
                      type=int,
