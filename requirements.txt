@@ -1,7 +1,8 @@
--e git+https://github.com/mahmoud/wapiti.git#egg=wapiti
-
-Twisted>=13.1.0
 autobahn==0.5.14
+py==1.4.26
 pytest==2.6.1
-python-geoip
-python-geoip-geolite2
+python-geoip==1.2
+python-geoip-geolite2==2014.207
+Twisted==14.0.2
+-e git+https://github.com/mahmoud/wapiti.git@5dc462b1e0d2290c1841980c94309efe4c27b75a#egg=wapiti-master
+zope.interface==4.1.2
