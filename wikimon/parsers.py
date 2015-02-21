@@ -114,10 +114,10 @@ def parse_irc_message(message, ns_map=DEFAULT_NS_MAP):
     ns, _, title_rem = top_level_title.partition(':')
     try:
         msg_dict['ns'] = ns_map[ns]
-        msg_dict['local_ns'] = ns
+        #msg_dict['local_ns'] = ns
     except KeyError:
         msg_dict['ns'] = 'Main'
-        msg_dict['local_ns'] = 'Main'
+        #msg_dict['local_ns'] = 'Main'
 
     try:
         msg_dict['change_size'] = int(msg_dict['change_size'])
