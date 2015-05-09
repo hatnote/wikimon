@@ -16,6 +16,9 @@ PARSE_EDIT_RE = re.compile(r'(\[\[(?P<page_title>.*?)\]\])'
 HASHTAG_RE = re.compile("(?:^|\s)[＃#]{1}(\w+)", re.UNICODE)
 MENTION_RE = re.compile("(?:^|\s)[＠ @]{1}([^\s#<>[\]|{}]+)", re.UNICODE)
 
+_SECTION_TITLE_RE = re.compile("\/\*\s*(?P<section_title>.+)\s*\*\/"
+                               "(?P<real_summary>.*)", re.UNICODE)
+
 NON_MAIN_NS = ['Talk',
                'User',
                'User talk',
@@ -89,6 +92,28 @@ def parse_revs_from_url(url):
         raise ValueError('unparsable url: %r' % (url,))
 
 
+def parse_section_title(summary):
+    """This function tries to extract the section title as it would be
+    automatically generated into the commit message when a user clicks
+    the edit button next to a section. The behavior is basically
+    identical to MediaWiki's, which is to say that it is simple. If
+    the commit message was generated otherwise or manually rewritten,
+    this function will not automatically figure that out.
+
+    Returns a tuple of section_title and "real" commit message
+    (message with the section title part removed).
+    """
+    match = _SECTION_TITLE_RE.match(summary)
+    if not match:
+        return '', summary.strip()
+    match_map = match.groupdict()
+    section_title = match_map['section_title']
+    real_summary = match_map['real_summary']
+    section_title = section_title.strip() if section_title else ''
+    real_summary = real_summary.strip() if real_summary else ''
+    return section_title, real_summary
+
+
 def parse_irc_message(message, ns_map=DEFAULT_NS_MAP):
     ret = PARSE_EDIT_RE.match(message)
     msg_dict = {'is_new': False,
@@ -140,10 +165,13 @@ def parse_irc_message(message, ns_map=DEFAULT_NS_MAP):
     msg_dict.setdefault('user', None)
     msg_dict['is_anon'] = is_ip(msg_dict['user'])
 
-    if msg_dict['summary']:
-        msg_dict['hashtags'] = HASHTAG_RE.findall(msg_dict['summary'])
-        msg_dict['mentions'] = MENTION_RE.findall(msg_dict['summary'])
+    summary = msg_dict['summary']
+    if summary:
+        msg_dict['section'], msg_dict['summary'] = parse_section_title(summary)
+        msg_dict['hashtags'] = HASHTAG_RE.findall(summary)
+        msg_dict['mentions'] = MENTION_RE.findall(summary)
     else:
+        msg_dict['section'] = ''
         msg_dict['hashtags'] = []
         msg_dict['mentions'] = []
 
