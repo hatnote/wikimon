@@ -167,11 +167,11 @@ def parse_irc_message(message, ns_map=DEFAULT_NS_MAP):
 
     summary = msg_dict['summary']
     if summary:
-        msg_dict['section'], msg_dict['summary'] = parse_section_title(summary)
+        msg_dict['section'], msg_dict['parsed_summary'] = parse_section_title(summary)
         msg_dict['hashtags'] = HASHTAG_RE.findall(summary)
         msg_dict['mentions'] = MENTION_RE.findall(summary)
     else:
-        msg_dict['section'] = ''
+        msg_dict['section'], msg_dict['parsed_summary'] = '', summary
         msg_dict['hashtags'] = []
         msg_dict['mentions'] = []
 
