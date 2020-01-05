@@ -1,4 +1,4 @@
-autobahn==0.5.14
+autobahn==0.6.4
 py==1.4.26
 pytest==2.6.1
 python-geoip==1.2
