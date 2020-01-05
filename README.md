@@ -43,32 +43,52 @@ optional arguments:
 Here are a couple example messages, as broadcast over WebSocket:
 
 ```json
+{
+  "action": "edit",
+  "change_size": 19,
+  "flags": "M",
+  "hashtags": [],
+  "is_anon": false,
+  "is_bot": false,
+  "is_minor": true,
+  "is_new": false,
+  "is_unpatrolled": false,
+  "mentions": [],
+  "ns": "User talk",
+  "page_title": "User talk:Manxruler",
+  "parent_rev_id": "775894803",
+  "rev_id": "775894650",
+  "summary": "/* The battle of Kristiansand (1940) */",
+  "url": "https://en.wikipedia.org/w/index.php?diff=775894803&oldid=775894650",
+  "user": "Carsten R D"
+}
 
-{"is_minor": false,
- "page_title": "Template:Citation needed/testcases",
- "url": "http://en.wikipedia.org/w/index.php?diff=553804313&oldid=479472901",
- "is_unpatrolled": false,
- "is_bot": false,
- "is_new": false,
- "summary": null,
- "flags": null,
- "user": "98.172.160.184",
- "is_anon": true,
- "ns": "Template",
- "change_size": "+42"}
-
-{"is_minor": true,
- "page_title": "Generalized anxiety disorder",
- "url": "http://en.wikipedia.org/w/index.php?diff=553804315&oldid=553370901",
- "is_unpatrolled": false,
- "is_bot": false,
- "is_new": false,
- "summary": "minor editing in sentences.",
- "flags": "M",
- "user": "BriannaMaxim",
- "is_anon": false,
- "ns": "Main",
- "change_size": "+1"}
+{
+  "action": "edit",
+  "change_size": -12,
+  "flags": null,
+  "geo_ip": {
+    "city": "Salisbury",
+    "country_name": "United States",
+    "latitude": 38.3761,
+    "longitude": -75.6086,
+    "region_name": "Maryland"
+  },
+  "hashtags": [],
+  "is_anon": true,
+  "is_bot": false,
+  "is_minor": false,
+  "is_new": false,
+  "is_unpatrolled": false,
+  "mentions": [],
+  "ns": "Main",
+  "page_title": "Evanescence (Evanescence album)",
+  "parent_rev_id": "775894800",
+  "rev_id": "774995266",
+  "summary": "/* Credits and personnel */ \"Personnel\" is sufficient",
+  "url": "https://en.wikipedia.org/w/index.php?diff=775894800&oldid=774995266",
+  "user": "71.200.123.192"
+}
 ```
 
 As you can see, the set of keys sent is always the same. Note that the
@@ -77,16 +97,7 @@ As you can see, the set of keys sent is always the same. Note that the
 
 ## Geolocation
 
-Geolocation is currently done through a local FreeGeoIP
-instance. FreeGeoIP requires Go and several Go libraries. It also
-requires memcached to be running on port 11211.
-
-The command used to run FreeGeoIP at the moment:
-
-```
-GOPATH=/home/hatnote/gopkg/ GOROOT=/home/hatnote/go nohup /home/hatnote/go/bin/go run freegeoip.go &
-```
-
+Geolocation is done in process, using maxmind's free dataset. See the GeoDB directory for more info.
 
 ## See also
 
