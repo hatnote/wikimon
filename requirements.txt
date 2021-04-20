@@ -1,5 +1,5 @@
 autobahn==0.5.14
-py==1.4.26
+py==1.10.0
 pytest==2.6.1
 python-geoip==1.2
 python-geoip-geolite2==2014.207
