@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import time
 from json import dumps
 from os.path import dirname, abspath
 
@@ -27,9 +28,11 @@ logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s\t%(name)s\t %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S')
 bcast_log = logging.getLogger('bcast_log')
+mon_log = logging.getLogger('mon_log')
 irc_log = logging.getLogger('irc_log')
 api_log = logging.getLogger('api_log')
-
+LAST_FORCED_LOG = 0
+FORCE_LOG_THRESH = 120
 
 DEFAULT_LANG = 'en'
 DEFAULT_PROJECT = 'wikipedia'
@@ -84,7 +87,7 @@ class Monitor(irc.IRCClient):
     # which conflicts with a lot of other clients out there and
     # sometimes prevents joining rooms.
 
-    nickname = 'wikimon'
+    nickname = 'wikimon2'
     GEO_IP_KEY = 'geo_ip'
 
     def __init__(self, geoip_db_monitor, bsf, ns_map, factory):
@@ -162,6 +165,10 @@ class BroadcastServerFactory(WebSocketServerFactory):
         WebSocketServerFactory.__init__(self, url, *a, **kw)
         self.clients = set()
         self.tickcount = 0
+        self.msgcount = 0
+        self.lang = lang
+        self.project = project
+        self.start_time = time.time()
 
         start_monitor(self, geoip_db, geoip_update_interval,
                       lang, project)  # blargh
@@ -184,10 +191,17 @@ class BroadcastServerFactory(WebSocketServerFactory):
             pass
 
     def broadcast(self, msg):
+        global LAST_FORCED_LOG
+        self.msgcount += 1
         bcast_log.info("broadcasting message %r", msg)
         for c in self.clients:
             c.sendMessage(msg)
             bcast_log.debug("message sent to %s", c.peerstr)
+            
+        if time.time() - LAST_FORCED_LOG > FORCE_LOG_THRESH:
+            LAST_FORCED_LOG = time.time()
+            data = {'msgs': self.msgcount, 'clients': len(self.clients), 'lang': self.lang, 'project': self.project, 'uptime_hours': (time.time() - self.start_time)/60/60}
+            mon_log.critical(dumps(data))
 
 
 class BroadcastPreparedServerFactory(BroadcastServerFactory):
