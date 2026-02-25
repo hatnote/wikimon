@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Wikimon Event Stream Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Menlo', 'Consolas', monospace; font-size: 13px; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
+  h1 { font-size: 18px; color: #eee; margin-bottom: 8px; }
+  .controls { margin-bottom: 12px; display: flex; gap: 8px; align-items: center; }
+  .controls input { background: #16213e; color: #e0e0e0; border: 1px solid #444; padding: 6px 10px; border-radius: 4px; font-family: inherit; width: 300px; }
+  .controls button { background: #0f3460; color: #e0e0e0; border: 1px solid #555; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-family: inherit; }
+  .controls button:hover { background: #1a5276; }
+  #status { padding: 4px 10px; border-radius: 4px; font-size: 12px; }
+  .status-connected { background: #1b4332; color: #95d5b2; }
+  .status-closed { background: #5c1a1a; color: #f4a0a0; }
+  .status-connecting { background: #3e2c00; color: #f0c040; }
+  .stats { font-size: 12px; color: #888; margin-bottom: 12px; }
+  .stats span { color: #aaa; margin-right: 16px; }
+  #events { display: flex; flex-direction: column; gap: 2px; max-height: calc(100vh - 140px); overflow-y: auto; }
+  .event { background: #16213e; border-left: 3px solid #0f3460; padding: 6px 10px; border-radius: 2px; display: grid; grid-template-columns: 200px 140px 70px auto; gap: 8px; align-items: baseline; }
+  .event:hover { background: #1a2744; }
+  .event.ns-main { border-left-color: #2ecc71; }
+  .event.anon { border-left-color: #e67e22; }
+  .event.bot { border-left-color: #9b59b6; }
+  .event.newpage { border-left-color: #3498db; }
+  .event.log { border-left-color: #e74c3c; }
+  .title { color: #58a6ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title a { color: inherit; text-decoration: none; }
+  .title a:hover { text-decoration: underline; }
+  .user { color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .user.anon { color: #e67e22; }
+  .size { text-align: right; font-variant-numeric: tabular-nums; }
+  .size.pos { color: #2ecc71; }
+  .size.neg { color: #e74c3c; }
+  .size.zero { color: #666; }
+  .summary { color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .section { color: #bb86fc; }
+  .raw-toggle { font-size: 11px; color: #555; cursor: pointer; margin-left: 8px; }
+  .raw-toggle:hover { color: #aaa; }
+  .raw-json { display: none; background: #0d1117; padding: 8px; margin-top: 4px; border-radius: 4px; white-space: pre-wrap; font-size: 11px; color: #8b949e; grid-column: 1 / -1; max-height: 300px; overflow-y: auto; }
+  .raw-json.visible { display: block; }
+</style>
+</head>
+<body>
+<h1>Wikimon Event Stream Viewer</h1>
+<div class="controls">
+  <input type="text" id="url" value="ws://localhost:9000">
+  <button id="connect">Connect</button>
+  <button id="disconnect">Disconnect</button>
+  <span id="status" class="status-closed">disconnected</span>
+</div>
+<div class="stats">
+  <span>events: <b id="count">0</b></span>
+  <span>Main ns: <b id="main-count">0</b></span>
+  <span>anon: <b id="anon-count">0</b></span>
+  <span>bot: <b id="bot-count">0</b></span>
+  <span>e/min: <b id="epm">0</b></span>
+</div>
+<div id="events"></div>
+
+<script>
+var ws = null;
+var stats = { total: 0, main: 0, anon: 0, bot: 0, times: [] };
+var MAX_EVENTS = 200;
+
+function updateStats() {
+  document.getElementById('count').textContent = stats.total;
+  document.getElementById('main-count').textContent = stats.main;
+  document.getElementById('anon-count').textContent = stats.anon;
+  document.getElementById('bot-count').textContent = stats.bot;
+  var now = Date.now();
+  stats.times = stats.times.filter(function(t) { return now - t < 60000; });
+  document.getElementById('epm').textContent = stats.times.length;
+}
+
+function setStatus(text, cls) {
+  var el = document.getElementById('status');
+  el.textContent = text;
+  el.className = cls;
+}
+
+function formatSize(n) {
+  if (n === null || n === undefined) return { text: '?', cls: 'zero' };
+  if (n > 0) return { text: '+' + n, cls: 'pos' };
+  if (n < 0) return { text: '' + n, cls: 'neg' };
+  return { text: '0', cls: 'zero' };
+}
+
+function addEvent(data) {
+  stats.total++;
+  stats.times.push(Date.now());
+  if (data.ns === 'Main') stats.main++;
+  if (data.is_anon) stats.anon++;
+  if (data.is_bot) stats.bot++;
+  updateStats();
+
+  var container = document.getElementById('events');
+  var row = document.createElement('div');
+  row.className = 'event';
+  if (data.ns === 'Main') row.className += ' ns-main';
+  if (data.is_anon) row.className += ' anon';
+  if (data.is_bot) row.className += ' bot';
+  if (data.is_new) row.className += ' newpage';
+  if (data.action && data.action.startsWith('Special:Log')) row.className += ' log';
+
+  var sz = formatSize(data.change_size);
+
+  // Title
+  var titleEl = document.createElement('div');
+  titleEl.className = 'title';
+  if (data.url) {
+    titleEl.innerHTML = '<a href="' + data.url + '" target="_blank">' +
+      escapeHtml(data.page_title) + '</a>';
+  } else {
+    titleEl.textContent = data.page_title;
+  }
+  row.appendChild(titleEl);
+
+  // User
+  var userEl = document.createElement('div');
+  userEl.className = 'user' + (data.is_anon ? ' anon' : '');
+  var badges = '';
+  if (data.is_bot) badges += '[bot] ';
+  if (data.is_anon) badges += '[anon] ';
+  if (data.is_new) badges += '[new] ';
+  if (data.is_minor) badges += '[m] ';
+  userEl.textContent = badges + data.user;
+  row.appendChild(userEl);
+
+  // Size
+  var sizeEl = document.createElement('div');
+  sizeEl.className = 'size ' + sz.cls;
+  sizeEl.textContent = sz.text;
+  row.appendChild(sizeEl);
+
+  // Summary
+  var sumEl = document.createElement('div');
+  sumEl.className = 'summary';
+  var sumText = '';
+  if (data.section) sumText += '<span class="section">/* ' + escapeHtml(data.section) + ' */</span> ';
+  sumText += escapeHtml(data.parsed_summary || '');
+  sumEl.innerHTML = sumText;
+
+  // Raw toggle
+  var toggle = document.createElement('span');
+  toggle.className = 'raw-toggle';
+  toggle.textContent = '[json]';
+  toggle.onclick = function() {
+    var raw = row.querySelector('.raw-json');
+    raw.classList.toggle('visible');
+  };
+  sumEl.appendChild(toggle);
+  row.appendChild(sumEl);
+
+  // Raw JSON (hidden by default)
+  var rawEl = document.createElement('div');
+  rawEl.className = 'raw-json';
+  rawEl.textContent = JSON.stringify(data, null, 2);
+  row.appendChild(rawEl);
+
+  container.insertBefore(row, container.firstChild);
+
+  // Cap displayed events
+  while (container.children.length > MAX_EVENTS) {
+    container.removeChild(container.lastChild);
+  }
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function connect() {
+  var url = document.getElementById('url').value;
+  if (ws) { ws.close(); ws = null; }
+  setStatus('connecting...', 'status-connecting');
+  ws = new WebSocket(url);
+  ws.onopen = function() { setStatus('connected to ' + url, 'status-connected'); };
+  ws.onclose = function() { setStatus('disconnected', 'status-closed'); };
+  ws.onerror = function(e) { setStatus('error', 'status-closed'); console.error(e); };
+  ws.onmessage = function(evt) {
+    try { addEvent(JSON.parse(evt.data)); } catch(e) { console.error('parse error', e); }
+  };
+}
+
+document.getElementById('connect').onclick = connect;
+document.getElementById('disconnect').onclick = function() { if (ws) ws.close(); };
+
+// Auto-connect on load
+connect();
+
+// Update epm every second
+setInterval(updateStats, 1000);
+</script>
+</body>
+</html>

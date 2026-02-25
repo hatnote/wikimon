@@ -1,0 +1,23 @@
+services:
+  wikimon-en:
+    build: .
+    ports:
+      - "9000:9000"
+    command: ["--lang", "en", "--port", "9000", "--loglevel", "INFO"]
+    restart: unless-stopped
+
+  wikimon-de:
+    build: .
+    ports:
+      - "9010:9010"
+    command: ["--lang", "de", "--port", "9010", "--loglevel", "INFO"]
+    restart: unless-stopped
+    profiles: ["full"]
+
+  wikimon-wikidata:
+    build: .
+    ports:
+      - "9220:9220"
+    command: ["--lang", "wikidata", "--project", "wikidata", "--port", "9220", "--loglevel", "INFO"]
+    restart: unless-stopped
+    profiles: ["full"]
