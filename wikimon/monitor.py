@@ -11,11 +11,13 @@ Replaces the old Twisted/IRC-based monitor_websocket.py.
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
 import time
 from argparse import ArgumentParser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from json import dumps
 from os.path import dirname, abspath
 
@@ -44,6 +46,54 @@ USER_AGENT = 'wikimon/0.7.0 (https://github.com/hatnote/wikimon; wikimon@hatnote
 
 # Stats logging interval in seconds
 STATS_LOG_INTERVAL = 120
+
+# Default language configurations
+# Each entry: (lang, project, ws_path)
+DEFAULT_LANGUAGES = [
+    ('en', 'wikipedia', '/en/'),
+    ('de', 'wikipedia', '/de/'),
+    ('ru', 'wikipedia', '/ru/'),
+    ('ja', 'wikipedia', '/ja/'),
+    ('es', 'wikipedia', '/es/'),
+    ('fr', 'wikipedia', '/fr/'),
+    ('nl', 'wikipedia', '/nl/'),
+    ('it', 'wikipedia', '/it/'),
+    ('sv', 'wikipedia', '/sv/'),
+    ('ar', 'wikipedia', '/ar/'),
+    ('id', 'wikipedia', '/id/'),
+    ('ta', 'wikipedia', '/ta/'),
+    ('pa', 'wikipedia', '/pa/'),
+    ('mr', 'wikipedia', '/mr/'),
+    ('hi', 'wikipedia', '/hi/'),
+    ('as', 'wikipedia', '/as/'),
+    ('bn', 'wikipedia', '/bn/'),
+    ('te', 'wikipedia', '/te/'),
+    ('kn', 'wikipedia', '/kn/'),
+    ('or', 'wikipedia', '/or/'),
+    ('sa', 'wikipedia', '/sa/'),
+    ('gu', 'wikipedia', '/gu/'),
+    ('fa', 'wikipedia', '/fa/'),
+    ('wikidata', 'wikidata', '/wikidata/'),
+    ('he', 'wikipedia', '/he/'),
+    ('zh', 'wikipedia', '/zh/'),
+    ('ml', 'wikipedia', '/ml/'),
+    ('pl', 'wikipedia', '/pl/'),
+    ('mk', 'wikipedia', '/mk/'),
+    ('be', 'wikipedia', '/be/'),
+    ('sr', 'wikipedia', '/sr/'),
+    ('bg', 'wikipedia', '/bg/'),
+    ('uk', 'wikipedia', '/uk/'),
+    ('hu', 'wikipedia', '/hu/'),
+    ('fi', 'wikipedia', '/fi/'),
+    ('no', 'wikipedia', '/no/'),
+    ('el', 'wikipedia', '/el/'),
+    ('eo', 'wikipedia', '/eo/'),
+    ('pt', 'wikipedia', '/pt/'),
+    ('et', 'wikipedia', '/et/'),
+    ('ur', 'wikipedia', '/ur/'),
+    ('ro', 'wikipedia', '/ro/'),
+    ('hy', 'wikipedia', '/hy/'),
+]
 
 
 def fetch_namespace_map(lang, project):
@@ -83,6 +133,27 @@ def fetch_namespace_map(lang, project):
     except Exception:
         logger.exception('Failed to fetch namespace map from %s, using defaults', api_url)
         return dict(DEFAULT_NS_MAP)
+
+
+def fetch_all_namespace_maps(languages):
+    """Fetch namespace maps for all languages in parallel.
+
+    Returns a dict keyed by (lang, project) tuples.
+    """
+    results = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(fetch_namespace_map, lang, project): (lang, project)
+            for lang, project, _ in languages
+        }
+        for future in as_completed(futures):
+            lang, project = futures[future]
+            try:
+                results[(lang, project)] = future.result()
+            except Exception:
+                logger.exception('Failed to fetch ns map for %s.%s', lang, project)
+                results[(lang, project)] = dict(DEFAULT_NS_MAP)
+    return results
 
 
 def _resolve_server_name(lang, project):
@@ -261,26 +332,60 @@ class GeoIPManager:
             self.reader = None
 
 
-class WikimonServer:
-    """Main server: consumes EventStreams, broadcasts via WebSocket."""
+@dataclasses.dataclass
+class LangChannel:
+    """A single language channel: holds its config and connected clients."""
+    lang: str
+    project: str
+    ws_path: str       # e.g. "/en/"
+    ns_map: dict
+    clients: set = dataclasses.field(default_factory=set)
 
-    def __init__(self, lang, project, port, geoip_manager, ns_map):
-        self.lang = lang
-        self.project = project
+
+class MultiLangWikimonServer:
+    """Multi-language server: one EventStreams consumer, per-language WebSocket channels."""
+
+    def __init__(self, languages, port, geoip_manager):
         self.port = port
         self.geoip = geoip_manager
-        self.ns_map = ns_map
-        self.server_name = _resolve_server_name(lang, project)
-        self.clients = set()
+        self.channels = {}          # server_name -> LangChannel
+        self.path_to_channel = {}   # ws_path -> LangChannel
         self.msg_count = 0
         self.start_time = time.time()
         self._last_event_id = None
 
+        # Fetch all namespace maps in parallel
+        ns_maps = fetch_all_namespace_maps(languages)
+        logger.info('Fetched namespace maps for %d languages', len(ns_maps))
+
+        for lang, project, ws_path in languages:
+            server_name = _resolve_server_name(lang, project)
+            ns_map = ns_maps.get((lang, project), dict(DEFAULT_NS_MAP))
+            channel = LangChannel(lang, project, ws_path, ns_map)
+            self.channels[server_name] = channel
+            self.path_to_channel[ws_path] = channel
+            # Also register bare path without trailing slash
+            bare = ws_path.rstrip('/')
+            if bare:
+                self.path_to_channel[bare] = channel
+
     async def ws_handler(self, websocket):
         """Handle an individual WebSocket client connection."""
-        self.clients.add(websocket)
+        path = websocket.request.path  # e.g. "/en/" or "/en"
+        # Normalize: strip trailing slash; bare "/" becomes "" then defaults to "/en"
+        normalized = path.rstrip('/') or '/en'
+        channel = self.path_to_channel.get(normalized)
+        if channel is None:
+            # Try with trailing slash as fallback
+            channel = self.path_to_channel.get(normalized + '/')
+        if channel is None:
+            await websocket.close(4004, f'Unknown language path: {path}')
+            return
+
+        channel.clients.add(websocket)
         remote = websocket.remote_address
-        logger.info('Client connected: %s (total: %d)', remote, len(self.clients))
+        logger.info('Client connected to %s: %s (total: %d)',
+                    channel.lang, remote, len(channel.clients))
         try:
             # Keep connection open; we only send, never receive meaningful data
             async for _ in websocket:
@@ -288,15 +393,16 @@ class WikimonServer:
         except websockets.ConnectionClosed:
             pass
         finally:
-            self.clients.discard(websocket)
-            logger.info('Client disconnected: %s (total: %d)', remote, len(self.clients))
+            channel.clients.discard(websocket)
+            logger.info('Client disconnected from %s (total: %d)',
+                        channel.lang, len(channel.clients))
 
-    async def broadcast(self, message):
-        """Send a message string to all connected WebSocket clients."""
-        if not self.clients:
+    async def broadcast(self, channel, message):
+        """Send a message string to all connected clients on a channel."""
+        if not channel.clients:
             return
         stale = set()
-        for ws in self.clients:
+        for ws in channel.clients:
             try:
                 await ws.send(message)
             except websockets.ConnectionClosed:
@@ -304,10 +410,10 @@ class WikimonServer:
             except Exception:
                 logger.debug('Error sending to client', exc_info=True)
                 stale.add(ws)
-        self.clients -= stale
+        channel.clients -= stale
 
     async def consume_eventstream(self):
-        """Connect to EventStreams SSE and process events.
+        """Connect to EventStreams SSE and process events for all languages.
 
         Auto-reconnects with exponential backoff on failure.
         """
@@ -317,23 +423,22 @@ class WikimonServer:
         while True:
             try:
                 headers = {'User-Agent': USER_AGENT}
-                url = EVENTSTREAMS_URL
                 if self._last_event_id:
-                    # Resume from last known event ID
                     headers['Last-Event-ID'] = self._last_event_id
 
-                logger.info('Connecting to EventStreams for %s (server_name=%s)',
-                            self.lang, self.server_name)
+                logger.info('Connecting to EventStreams (all languages, %d channels)',
+                            len(self.channels))
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers=headers, timeout=None) as resp:
+                    async with session.get(EVENTSTREAMS_URL, headers=headers,
+                                           timeout=None) as resp:
                         if resp.status != 200:
-                            logger.error('EventStreams returned HTTP %d, retrying in %ds',
+                            logger.error('EventStreams HTTP %d, retry in %ds',
                                          resp.status, backoff)
                             await asyncio.sleep(backoff)
                             backoff = min(backoff * 2, max_backoff)
                             continue
                         backoff = 1  # Reset on successful connection
-                        logger.info('Connected to EventStreams (status=%s)', resp.status)
+                        logger.info('Connected to EventStreams')
 
                         event_id = None
                         event_data = None
@@ -359,22 +464,24 @@ class WikimonServer:
 
                                 event_data = None
 
-                                # Filter for our server_name
-                                if data.get('server_name') != self.server_name:
-                                    continue
+                                # Dispatch to the correct channel
+                                server_name = data.get('server_name')
+                                channel = self.channels.get(server_name)
+                                if channel is None:
+                                    continue  # Not a language we serve
 
-                                await self._process_event(data)
+                                await self._process_event(data, channel)
 
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception('EventStreams connection error, reconnecting in %ds', backoff)
+                logger.exception('EventStreams error, reconnecting in %ds', backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
 
-    async def _process_event(self, event):
-        """Transform an event and broadcast it."""
-        msg = transform_event(event, self.ns_map)
+    async def _process_event(self, event, channel):
+        """Transform an event and broadcast it to the channel."""
+        msg = transform_event(event, channel.ns_map)
 
         # GeoIP lookup for anonymous users
         if msg['is_anon'] and msg['user']:
@@ -386,8 +493,8 @@ class WikimonServer:
 
         json_str = dumps(msg, sort_keys=True)
         self.msg_count += 1
-        logger.debug('Broadcasting: %s', json_str[:200])
-        await self.broadcast(json_str)
+        logger.debug('Broadcasting to %s: %s', channel.lang, json_str[:200])
+        await self.broadcast(channel, json_str)
 
     async def _periodic_geoip_check(self):
         """Periodically check if the GeoIP database needs reloading."""
@@ -401,19 +508,22 @@ class WikimonServer:
         while True:
             await asyncio.sleep(STATS_LOG_INTERVAL)
             uptime_hours = (time.time() - self.start_time) / 3600
+            total_clients = sum(len(ch.clients) for ch in self.channels.values())
+            per_lang = {ch.lang: len(ch.clients) for ch in self.channels.values()
+                        if ch.clients}
             stats = {
                 'msgs': self.msg_count,
-                'clients': len(self.clients),
-                'lang': self.lang,
-                'project': self.project,
+                'total_clients': total_clients,
+                'active_langs': per_lang,
+                'num_channels': len(self.channels),
                 'uptime_hours': round(uptime_hours, 2),
             }
             logger.info('stats: %s', dumps(stats))
 
     async def run(self):
         """Start the WebSocket server and EventStreams consumer."""
-        logger.info('Starting wikimon server: lang=%s project=%s port=%d',
-                    self.lang, self.project, self.port)
+        logger.info('Starting multi-lang wikimon: %d channels, port=%d',
+                    len(self.channels), self.port)
 
         async with websockets.serve(self.ws_handler, '0.0.0.0', self.port):
             logger.info('WebSocket server listening on 0.0.0.0:%d', self.port)
@@ -425,21 +535,22 @@ class WikimonServer:
 
 
 def get_argparser():
-    desc = "Broadcast realtime Wikimedia edits over WebSockets (EventStreams-based)"
+    desc = "Broadcast realtime Wikimedia edits over WebSockets (multi-language)"
     prs = ArgumentParser(description=desc)
     prs.add_argument('--geoip-db', default=None,
                      help='path to the GeoLite2 database')
     prs.add_argument('--geoip-update-interval',
-                     default=DEFAULT_GEOIP_UPDATE_INTERVAL,
-                     type=int,
-                     help='how often (in seconds) to check for GeoIP db updates')
-    prs.add_argument('--project', default=DEFAULT_PROJECT)
-    prs.add_argument('--lang', default=DEFAULT_LANG)
+                     default=DEFAULT_GEOIP_UPDATE_INTERVAL, type=int,
+                     help='seconds between GeoIP db mtime checks')
     prs.add_argument('--port', default=DEFAULT_BCAST_PORT, type=int,
-                     help='listen port for WebSocket connections')
+                     help='single listen port for all WebSocket connections')
+    prs.add_argument('--lang', default=None,
+                     help='run a single language only (for testing); omit for all')
+    prs.add_argument('--project', default=DEFAULT_PROJECT,
+                     help='project (used with --lang)')
     prs.add_argument('--debug', default=False, action='store_true')
     prs.add_argument('--loglevel', default='WARN',
-                     help='e.g., DEBUG, INFO, WARN, etc.')
+                     help='e.g., DEBUG, INFO, WARN')
     return prs
 
 
@@ -463,24 +574,20 @@ def main():
     )
 
     # GeoIP setup
-    geoip_db_path = args.geoip_db
-    if not geoip_db_path:
-        logger.info('geoip_db not set, defaulting to %r', DEFAULT_GEOIP_DB)
-        geoip_db_path = DEFAULT_GEOIP_DB
-
+    geoip_db_path = args.geoip_db or DEFAULT_GEOIP_DB
     geoip = GeoIPManager(geoip_db_path, args.geoip_update_interval)
 
-    # Namespace map
-    ns_map = fetch_namespace_map(args.lang, args.project)
-    logger.info('Fetched namespace map with %d entries', len(ns_map))
+    # Language selection
+    if args.lang:
+        languages = [(args.lang, args.project, f'/{args.lang}/')]
+    else:
+        languages = DEFAULT_LANGUAGES
 
     # Run
-    server = WikimonServer(
-        lang=args.lang,
-        project=args.project,
+    server = MultiLangWikimonServer(
+        languages=languages,
         port=args.port,
         geoip_manager=geoip,
-        ns_map=ns_map,
     )
 
     try:
