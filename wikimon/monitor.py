@@ -369,9 +369,15 @@ class MultiLangWikimonServer:
             if bare:
                 self.path_to_channel[bare] = channel
 
-    async def ws_handler(self, websocket):
-        """Handle an individual WebSocket client connection."""
-        path = websocket.request.path  # e.g. "/en/" or "/en"
+    async def ws_handler(self, websocket, path=None):
+        """Handle an individual WebSocket client connection.
+
+        Accepts optional path arg for websockets 9.x compat (where serve()
+        passes path as the second argument). On websockets 12+ the path is
+        read from websocket.request.path instead.
+        """
+        if path is None:
+            path = websocket.request.path
         # Normalize: strip trailing slash; bare "/" becomes "" then defaults to "/en"
         normalized = path.rstrip('/') or '/en'
         channel = self.path_to_channel.get(normalized)
