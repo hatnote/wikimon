@@ -1,5 +1,7 @@
 # Wikimon: Single-Process Refactor and Parallel Deployment Plan
 
+NB: VERY IMPORTANT: Legacy system should not be touched. Intermittent restarts, etc., are fine, but the legacy system must stay up.
+
 ## Context and Current State
 
 ### Architecture Overview
@@ -647,6 +649,233 @@ Success criteria:
 - No memory growth (check RSS at start and after 48h)
 - All 37 language channels producing events
 
+
+### 3.5 Frontend: listen.hatnote.com Backend Toggle
+
+#### Current Production State
+
+A prior session committed `0d4a297` ("Switch to WSS via nginx proxy, add HTTPS") which **has not been deployed**. That commit prematurely switched all URLs from direct-port `ws://` to nginx-proxied `wss://`, assuming the new wikimon nginx SSL config was live. **It is not.**
+
+The actual deployed state (`ea708fd` and earlier):
+
+- `listen.hatnote.com` served over **HTTP only** (no SSL, no redirect)
+- Frontend connects directly to per-process ports, bypassing nginx:
+
+```javascript
+var langs = {
+    'en': ['English', 'ws://wikimon.hatnote.com:9000'],
+    'de': ['German', 'ws://wikimon.hatnote.com:9010'],
+    // ... 43 entries, each with ws:// to a unique port
+    'wikidata': ['Wikidata', 'ws://wikimon.hatnote.com:9220']
+}
+```
+
+- `listen.nginx.conf` is HTTP-only, serves static files:
+
+```nginx
+server {
+    server_name  listen.hatnote.com l2w.hatnote.com;
+    listen  80;
+    root  /home/hatnote/listen/static/;
+    # ...
+}
+```
+
+#### Design: Protocol-Based Toggle
+
+The page protocol naturally determines the backend:
+
+| Protocol | Frontend | WebSocket | Backend |
+|---|---|---|---|
+| `http://listen.hatnote.com` | HTTP | `ws://wikimon.hatnote.com:PORT` | Legacy (direct to per-process ports) |
+| `https://listen.hatnote.com` | HTTPS | `wss://wikimon.hatnote.com/<lang>/` | New (nginx SSL proxy → single process on 9500) |
+
+This is enforced by browsers: an HTTPS page cannot open `ws://` connections (mixed content), and the legacy backend doesn't serve SSL. The protocol IS the toggle.
+
+The toggle checkbox simply navigates to the other protocol. Page reload reconnects all sockets with the correct URL scheme. No manual socket juggling needed.
+
+#### Step 1: Revert Premature Commit
+
+The commit `0d4a297` in `listen-to-wikipedia` must be reverted or reworked before any of this deploys. It assumed infrastructure that doesn't exist yet.
+
+```bash
+cd /home/mahmoud/hatnote/listen-to-wikipedia
+git revert 0d4a297  # or rework into the protocol-toggle version below
+```
+
+#### Step 2: Update `conf/listen.nginx.conf`
+
+Serve the page on **both** HTTP and HTTPS. No redirect during migration:
+
+```nginx
+# HTTPS — new backend path
+server {
+    server_name  listen.hatnote.com l2w.hatnote.com;
+    listen 443 ssl;
+
+    ssl_certificate /etc/letsencrypt/live/hatnote.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hatnote.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    root  /home/hatnote/listen/static/;
+    access_log  /home/hatnote/listen/logs/access.log combined buffer=128k flush=10s;
+    error_log  /home/hatnote/listen/logs/error.log;
+
+    expires  1d;
+}
+
+# HTTP — legacy (no redirect, serves same static files)
+server {
+    server_name  listen.hatnote.com l2w.hatnote.com;
+    listen  80;
+    root  /home/hatnote/listen/static/;
+    access_log  /home/hatnote/listen/logs/access.log combined buffer=128k flush=10s;
+    error_log  /home/hatnote/listen/logs/error.log;
+
+    expires  1d;
+}
+```
+
+**Important:** No `return 301` on port 80. Both protocols must serve the page during migration.
+
+#### Step 3: Update `static/index.html`
+
+Replace the static `langs` object with protocol-aware URL construction:
+
+```javascript
+/* Backend configuration
+   ===================== */
+
+var lang_defs = {
+    'en':       ['English',     9000],
+    'de':       ['German',      9010],
+    'ru':       ['Russian',     9020],
+    'uk':       ['Ukrainian',   9310],
+    'ja':       ['Japanese',    9030],
+    'es':       ['Spanish',     9040],
+    'fr':       ['French',      9050],
+    'nl':       ['Dutch',       9060],
+    'it':       ['Italian',     9070],
+    'sv':       ['Swedish',     9080],
+    'ar':       ['Arabic',      9090],
+    'fa':       ['Farsi',       9210],
+    'he':       ['Hebrew',      9230],
+    'id':       ['Indonesian',  9100],
+    'zh':       ['Chinese',     9240],
+    'as':       ['Assamese',    9150],
+    'hi':       ['Hindi',       9140],
+    'bn':       ['Bengali',     9160],
+    'pa':       ['Punjabi',     9120],
+    'te':       ['Telugu',      9165],
+    'ta':       ['Tamil',       9110],
+    'ml':       ['Malayalam',   9250],
+    'mr':       ['Western Mari', 9130],
+    'kn':       ['Kannada',     9170],
+    'or':       ['Oriya',       9180],
+    'sa':       ['Sanskrit',    9190],
+    'gu':       ['Gujarati',    9200],
+    'pl':       ['Polish',      9260],
+    'mk':       ['Macedonian',  9270],
+    'be':       ['Belarusian',  9280],
+    'sr':       ['Serbian',     9290],
+    'bg':       ['Bulgarian',   9300],
+    'hu':       ['Hungarian',   9320],
+    'fi':       ['Finnish',     9330],
+    'no':       ['Norwegian',   9340],
+    'el':       ['Greek',       9350],
+    'eo':       ['Esperanto',   9360],
+    'pt':       ['Portuguese',  9370],
+    'et':       ['Estonian',    9380],
+    'ur':       ['Urdu',        9390],
+    'ro':       ['Romanian',    9400],
+    'hy':       ['Armenian',    9410],
+    'wikidata': ['Wikidata',    9220]
+};
+
+var use_new_backend = (location.protocol === 'https:');
+
+function build_langs() {
+    var result = {};
+    for (var code in lang_defs) {
+        if (lang_defs.hasOwnProperty(code)) {
+            var name = lang_defs[code][0];
+            var port = lang_defs[code][1];
+            if (use_new_backend) {
+                // HTTPS: through nginx to single-process backend
+                result[code] = [name, 'wss://wikimon.hatnote.com/' + code + '/'];
+            } else {
+                // HTTP: direct to per-process legacy port
+                result[code] = [name, 'ws://wikimon.hatnote.com:' + port];
+            }
+        }
+    }
+    return result;
+}
+
+var langs = build_langs();
+```
+
+#### Step 4: Add Toggle Checkbox
+
+In the Settings section of `index.html` (the `.foot` div), after the existing checkboxes:
+
+```html
+<p><input type="checkbox" name="use_new_backend" id="use_new_backend">
+<label for="use_new_backend">Use new backend (HTTPS)</label></p>
+```
+
+Handler (inside the `$(function(){ ... })` block):
+
+```javascript
+$('#use_new_backend').prop('checked', use_new_backend);
+$('#use_new_backend').click(function() {
+    // Navigate to the other protocol — page reload handles reconnection
+    if ($(this).is(':checked')) {
+        window.location.protocol = 'https:';
+    } else {
+        window.location.protocol = 'http:';
+    }
+});
+```
+
+The checkbox state is implicit from the URL — no `localStorage` needed. If you're on HTTPS, the box is checked. If HTTP, unchecked. Page reload after protocol switch reconstructs `langs` with the correct URL scheme and reconnects all sockets naturally.
+
+#### Step 5: Prerequisite — wikimon nginx must be ready
+
+The HTTPS path (`wss://wikimon.hatnote.com/<lang>/`) only works once the wikimon nginx port 443 config proxies to the new single-process backend on port 9500. This is the config from Phase 1.11:
+
+```nginx
+# wikimon.nginx.conf — port 443 proxies to new backend
+server {
+    server_name  wikimon.hatnote.com;
+    listen 443 ssl;
+    # ... SSL config ...
+    location / {
+        proxy_pass http://127.0.0.1:9500;
+    }
+}
+```
+
+The legacy direct-port connections (`ws://wikimon.hatnote.com:9000`) bypass nginx entirely, so the legacy supervisor processes must remain running during parallel deployment.
+
+#### Behavior Summary
+
+| User visits | Checkbox | WebSocket URLs | Backend |
+|---|---|---|---|
+| `http://listen.hatnote.com` | Unchecked | `ws://wikimon.hatnote.com:9000` | Legacy per-process (37 ports) |
+| `https://listen.hatnote.com` | Checked | `wss://wikimon.hatnote.com/en/` | New single-process (port 9500 via nginx) |
+
+Toggling the checkbox navigates to the other protocol. The page reloads, `build_langs()` picks up the new scheme, and all sockets reconnect. No mixing, no partial state.
+
+#### After Cutover (Phase 5 cleanup)
+
+Once the legacy processes are stopped and port 80 is no longer needed:
+
+1. Add `return 301 https://$host$request_uri;` back to the listen port-80 server block
+2. Remove the toggle checkbox and `use_new_backend` variable
+3. Simplify `build_langs()` to always produce `wss://` URLs (or revert to a static `langs` object)
+4. Remove the port numbers from `lang_defs` (no longer needed)
 ---
 
 ## Phase 4: Cutover
@@ -717,15 +946,22 @@ sudo supervisorctl status | grep wikimon_
 # All should show STOPPED
 ```
 
-### 4.4 Fix `listen.hatnote.com` Config
+### 4.4 Update `listen.hatnote.com` Frontend
 
-If `listen.hatnote.com` (the frontend) connects directly to per-language wikimon ports (bypassing nginx), update its config to use the new single endpoint. The frontend JavaScript (`app.js`) likely opens a WebSocket to `wss://wikimon.hatnote.com/<lang>/` — this continues to work after the nginx swap with no change needed.
+After the nginx swap, the new wikimon backend serves HTTPS/WSS traffic. The frontend toggle (Phase 3.5) means:
 
-If any backend-to-backend connections exist that bypass nginx and hit `localhost:9000` directly, they must be updated to `localhost:9500/<lang>/`.
+- Users on `https://listen.hatnote.com` are already hitting the new backend (confirmed during burn-in)
+- Users on `http://listen.hatnote.com` still hit the legacy per-process ports
+
+Once legacy processes are stopped (Phase 4.3), the HTTP path breaks. This is intentional — after verifying production on HTTPS, the HTTP-only legacy path is no longer needed.
+
+If any internal service connects to `localhost:9000` directly (bypassing nginx), update it to `localhost:9500/<lang>/`.
 
 ---
 
 ## Phase 5: Cleanup
+
+TO BE DONE MANUALLY UNLESS OTHERWISE SPECIFIED:
 
 ### 5.1 Remove Legacy Supervisor Entries
 
@@ -775,6 +1011,16 @@ GEODB_DIR=/home/hatnote/wikimon-v2/geodb/
 
 Or symlink: `ln -s /home/hatnote/wikimon/geodb /home/hatnote/wikimon-v2/geodb`
 
+### 5.5 Remove Frontend Toggle and Finalize HTTPS
+
+Once the legacy processes are stopped and the new backend is confirmed stable:
+
+1. **Restore HTTP→HTTPS redirect** in `conf/listen.nginx.conf`: replace the port-80 static-serving block with `return 301 https://$host$request_uri;`
+2. **Remove the toggle checkbox** (`#use_new_backend`) from the Settings section in `static/index.html`
+3. **Simplify `build_langs()`**: remove the `use_new_backend` branch and port numbers from `lang_defs`; always produce `wss://` URLs
+4. **Remove the `$('#use_new_backend').click(...)` handler**
+5. The premature commit `0d4a297` can now be fully superseded — its intent (HTTPS everywhere) is realized, but through the correct infrastructure
+
 ---
 
 ## Rollback Plan
@@ -785,7 +1031,7 @@ At every phase, rollback is a simple config swap:
 |---|---|
 | Phase 1 (code) | `git revert` or `git checkout main` |
 | Phase 2 (deploy) | Don't start supervisor entry |
-| Phase 3 (parallel) | Remove `/v2/` nginx route, stop new supervisor entry |
+| Phase 3 (parallel) | Stop new supervisor entry, restore listen.nginx.conf to HTTP-only (revert toggle), restore wikimon.nginx.conf |
 | Phase 4 (cutover) | Restore `wikimon.conf.bak`, `sudo nginx -s reload`, restart old supervisor entries |
 | Phase 5 (cleanup) | If old entries are removed, re-add them from git history |
 
@@ -821,7 +1067,7 @@ Time to full rollback: **< 60 seconds**.
 | Memory pressure from 37 channel client sets in one process | Low | Medium | Each client set is just a `set()` of lightweight WebSocket references. ~37 sets vs. 37 processes is a net reduction. Monitor RSS during burn-in. |
 | EventStreams SSE volume overwhelms single consumer | Low | Low | EventStreams delivers ~50-200 events/sec across all wikis. The current code already parses JSON and broadcasts per event. Single-threaded async handles this easily. |
 | Namespace map fetch at startup takes too long (37 API calls) | Medium | Low | Mitigated by `ThreadPoolExecutor(max_workers=10)`. Total time: ~5-10s instead of ~30-60s sequential. Failure falls back to `DEFAULT_NS_MAP`. |
-| `listen.hatnote.com` breaks due to changed port | Medium | High | Investigate `listen.hatnote.com` config before cutover. If it connects via nginx (likely), no change needed. If it connects to `localhost:9000` directly, update to `localhost:9500/en/`. |
+| `listen.hatnote.com` breaks after legacy shutdown | Low | High | Protocol-based toggle lets users compare backends before cutover. HTTPS path validated during burn-in. HTTP path intentionally retired only after HTTPS is confirmed working. Rollback: restart legacy processes, restore HTTP-only listen config. |
 | WebSocket path routing rejects clients using bare `/` | Low | Medium | Root path `/` maps to English channel for backwards compatibility. Tested in validation checklist. |
 | GeoIP database path mismatch after deployment | Low | Low | `--geoip-db` flag explicitly set in supervisor config. Verified during smoke test. |
 | Old supervisor entries auto-restart after stop | None | None | Use `supervisorctl remove` (Phase 5), not just `stop`, to prevent restart. |
@@ -839,5 +1085,6 @@ Time to full rollback: **< 60 seconds**.
 | Nginx location blocks | 37 | 1 |
 | Supervisor entries | 37 | 1 |
 | Memory (estimated) | ~1.5-2 GB (37 x ~40-50 MB) | ~50-100 MB |
+| Frontend protocol | HTTP only (`ws://`) | HTTPS (`wss://`) |
 | Adding a new language | 3 config files + restart | 1 line in `DEFAULT_LANGUAGES` + restart |
 | Rollback time | N/A | < 60 seconds |
