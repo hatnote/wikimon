@@ -1,41 +1,44 @@
 # WikiMon
 
-Watch the [RecentChanges IRC
-feed](http://meta.wikimedia.org/wiki/Research:Data#IRC_Feeds) with
-Python. Support for various WikiMedia projects and languages.
+Watch the [Wikimedia EventStreams](https://stream.wikimedia.org/?doc)
+feed with Python. Support for various Wikimedia projects and languages.
 
 
 ## Usage
 
-At the moment, WikiMon's primary usage pattern is broadcasting changes
-over WebSocket. If you'd simply like to consume these messages, feel
-free to point a WebSocket client (such as your browser or Autobahn) at
-`http://wikimon.hatnote.com/en/`.
+WikiMon broadcasts real-time Wikimedia edits over WebSocket. Point a
+WebSocket client at `wss://wikimon.hatnote.com/en/` (or any supported
+language path like `/de/`, `/ja/`, `/wikidata/`, etc.).
 
-If you'd like to run your own copy of WikiMon, install the
-requirements below, and run the `monitor_websocket.py` command as
-follows:
+To run your own instance:
 
 ```
-usage: monitor_websocket.py [-h] [--project PROJECT] [--lang LANG]
-                            [--port PORT] [--debug] [--loglevel LOGLEVEL]
+usage: python -m wikimon.monitor [-h] [--port PORT] [--lang LANG]
+                                 [--project PROJECT] [--geoip-db GEOIP_DB]
+                                 [--debug] [--loglevel LOGLEVEL]
 
-broadcast realtime edits to a Mediawiki project over websockets
+Broadcast realtime Wikimedia edits over WebSockets (multi-language)
 
 optional arguments:
     -h, --help           show this help message and exit
-    --project PROJECT
-    --lang LANG
-    --port PORT          listen port for websocket connections
+    --port PORT          listen port for WebSocket connections
+    --lang LANG          run a single language only (for testing); omit for all
+    --project PROJECT    project (used with --lang)
+    --geoip-db GEOIP_DB  path to the GeoLite2 database
     --debug
-    --loglevel LOGLEVEL
+    --loglevel LOGLEVEL  e.g., DEBUG, INFO, WARN
 ```
+
+By default (no `--lang`), the server handles all 43 supported languages
+on a single port, routing by WebSocket path.
 
 ### Requirements
 
- - Twisted==13.0.0
- - autobahn==0.5.14
- - [wapiti](https://github.com/mahmoud/wapiti)
+ - Python 3.10+
+ - aiohttp
+ - websockets
+ - maxminddb
+ - requests
 
 
 ## Format
@@ -46,7 +49,6 @@ Here are a couple example messages, as broadcast over WebSocket:
 {
   "action": "edit",
   "change_size": 19,
-  "flags": "M",
   "hashtags": [],
   "is_anon": false,
   "is_bot": false,
@@ -66,7 +68,6 @@ Here are a couple example messages, as broadcast over WebSocket:
 {
   "action": "edit",
   "change_size": -12,
-  "flags": null,
   "geo_ip": {
     "city": "Salisbury",
     "country_name": "United States",
@@ -91,17 +92,19 @@ Here are a couple example messages, as broadcast over WebSocket:
 }
 ```
 
-As you can see, the set of keys sent is always the same. Note that the
-`flags` key is redundant, as it is parsed out into `is_minor`,
-`is_bot`, `is_unpatrolled`, and `is_new`.
+The set of keys is always the same. Anonymous edits include a `geo_ip`
+dict with geographic information; registered user edits have an empty
+`geo_ip` dict.
 
 ## Geolocation
 
-Geolocation is done in process, using maxmind's free dataset. See the GeoDB directory for more info.
+Geolocation is done in-process using MaxMind's GeoLite2-City database.
+See the `geodb/` directory for more info. The `GeoIPManager` checks for
+database file updates periodically and reloads automatically.
 
 ## See also
 
-* [wikimon](https://github.com/hatnote/wikimon)
+* [listen-to-wikipedia](https://github.com/hatnote/listen-to-wikipedia)
 * [hatnote](https://github.com/hatnote)
 * [Stephen LaPorte](https://github.com/slaporte)
-* [Mahmoud Hashemi](https://github.com/mahmoud).
+* [Mahmoud Hashemi](https://github.com/mahmoud)
