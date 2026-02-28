@@ -39,7 +39,7 @@ setup(name='wikimon',
       install_requires=['aiohttp>=3.8,<4',
                         'websockets>=9.0,<14',
                         'maxminddb>=2.2,<3',
-                        'requests>=2.28,<3'],
+                        'requests>=2.20,<3'],
       license=__license__,
       platforms='any',
       classifiers=[

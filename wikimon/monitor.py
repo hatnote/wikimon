@@ -372,12 +372,14 @@ class MultiLangWikimonServer:
     async def ws_handler(self, websocket, path=None):
         """Handle an individual WebSocket client connection.
 
-        Accepts optional path arg for websockets 9.x compat (where serve()
-        passes path as the second argument). On websockets 12+ the path is
-        read from websocket.request.path instead.
+        Compatible with websockets 9.x (websocket.path) through 13.x
+        (websocket.request.path).
         """
         if path is None:
-            path = websocket.request.path
+            try:
+                path = websocket.path             # websockets 9.x-11.x
+            except AttributeError:
+                path = websocket.request.path      # websockets 12+
         # Normalize: strip trailing slash; bare "/" becomes "" then defaults to "/en"
         normalized = path.rstrip('/') or '/en'
         channel = self.path_to_channel.get(normalized)
