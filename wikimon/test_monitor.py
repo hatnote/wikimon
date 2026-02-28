@@ -2,7 +2,7 @@
 
 import pytest
 
-from wikimon.monitor import transform_event, GeoIPManager
+from wikimon.monitor import transform_event
 
 
 # Expected keys in every transform_event output
@@ -77,7 +77,7 @@ class TestTransformEvent:
         msg = transform_event(event, NS_MAP)
         assert msg['is_minor'] is True
 
-    def test_anonymous_edit(self):
+    def test_anonymous_edit_ip(self):
         event = dict(SAMPLE_EDIT_EVENT)
         event['user'] = '192.168.1.1'
         msg = transform_event(event, NS_MAP)
@@ -89,6 +89,13 @@ class TestTransformEvent:
         event['user'] = '2001:558:6033:77:453B:B384:FEF:E2D9'
         msg = transform_event(event, NS_MAP)
         assert msg['is_anon'] is True
+
+    def test_anonymous_temp_account(self):
+        event = dict(SAMPLE_EDIT_EVENT)
+        event['user'] = '~2026-93757-24'
+        msg = transform_event(event, NS_MAP)
+        assert msg['is_anon'] is True
+        assert msg['user'] == '~2026-93757-24'
 
     def test_log_event_newusers(self):
         event = {
@@ -192,78 +199,3 @@ class TestTransformEvent:
         msg = transform_event(event, NS_MAP)
         assert msg['is_unpatrolled'] is True
 
-
-# ---- GeoIPManager ----
-
-class FakeMaxmindReader:
-    """Mock maxminddb reader for testing."""
-
-    def __init__(self, result):
-        self.result = result
-
-    def get(self, ip):
-        return self.result
-
-    def close(self):
-        pass
-
-
-def _make_geoip_manager(reader):
-    """Create a GeoIPManager without opening a real database file."""
-    mgr = object.__new__(GeoIPManager)
-    mgr.db_path = '/nonexistent'
-    mgr.check_interval = 30
-    mgr.last_mtime = 0
-    mgr.reader = reader
-    return mgr
-
-
-class TestGeoIPManager:
-    def test_lookup_success(self):
-        result = {
-            'city': {'names': {'en': 'San Francisco'}},
-            'country': {'names': {'en': 'United States'}},
-            'location': {'latitude': 37.7749, 'longitude': -122.4194},
-            'subdivisions': [{'names': {'en': 'California'}}],
-        }
-        mgr = _make_geoip_manager(FakeMaxmindReader(result))
-        geo = mgr.lookup('8.8.8.8')
-        assert geo['country_name'] == 'United States'
-        assert geo['city'] == 'San Francisco'
-        assert geo['latitude'] == 37.7749
-        assert geo['longitude'] == -122.4194
-        assert geo['region_name'] == 'California'
-
-    def test_lookup_unknown_ip(self):
-        mgr = _make_geoip_manager(FakeMaxmindReader(None))
-        geo = mgr.lookup('10.0.0.1')
-        assert geo == {}
-
-    def test_lookup_no_reader(self):
-        mgr = _make_geoip_manager(None)
-        geo = mgr.lookup('8.8.8.8')
-        assert geo == {}
-
-    def test_lookup_partial_data(self):
-        # Only country, no city/subdivisions
-        result = {
-            'country': {'names': {'en': 'Germany'}},
-            'location': {'latitude': 51.0, 'longitude': 9.0},
-        }
-        mgr = _make_geoip_manager(FakeMaxmindReader(result))
-        geo = mgr.lookup('1.2.3.4')
-        assert geo['country_name'] == 'Germany'
-        assert geo['latitude'] == 51.0
-        assert geo['city'] is None
-        assert geo['region_name'] is None
-
-    def test_lookup_exception(self):
-        class RaisingReader:
-            def get(self, ip):
-                raise ValueError('bad ip')
-            def close(self):
-                pass
-
-        mgr = _make_geoip_manager(RaisingReader())
-        geo = mgr.lookup('bad')
-        assert geo == {}

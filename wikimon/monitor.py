@@ -14,19 +14,16 @@ import asyncio
 import dataclasses
 import json
 import logging
-import os
 import time
 from argparse import ArgumentParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from json import dumps
-from os.path import dirname, abspath
 
 import aiohttp
 import websockets
-import maxminddb
 
 from wikimon.parsers import (
-    is_ip,
+    is_anon,
     parse_comment,
     DEFAULT_NS_MAP,
 )
@@ -36,10 +33,6 @@ logger = logging.getLogger('wikimon')
 DEFAULT_LANG = 'en'
 DEFAULT_PROJECT = 'wikipedia'
 DEFAULT_BCAST_PORT = 9000
-DEFAULT_GEOIP_DB = os.path.join(
-    dirname(dirname(abspath(__file__))), 'geodb', 'GeoLite2-City.mmdb'
-)
-DEFAULT_GEOIP_UPDATE_INTERVAL = 30  # seconds
 
 EVENTSTREAMS_URL = 'https://stream.wikimedia.org/v2/stream/recentchange'
 USER_AGENT = 'wikimon/0.7.0 (https://github.com/hatnote/wikimon; wikimon@hatnote.com)'
@@ -169,7 +162,7 @@ def transform_event(event, ns_map):
     The output dict MUST match the fields the frontend (app.js) consumes:
     page_title, user, is_anon, is_bot, is_new, is_minor, is_unpatrolled,
     change_size, url, ns, summary, action, hashtags, mentions, section,
-    parsed_summary, rev_id, parent_rev_id, geo_ip (added separately).
+    parsed_summary, rev_id, parent_rev_id.
     """
     title = event.get('title', '')
     user = event.get('user', '')
@@ -226,7 +219,7 @@ def transform_event(event, ns_map):
         action = 'edit'
 
     # Flags
-    is_anon = is_ip(user)
+    anon_flag = is_anon(user)
     is_bot = bool(event.get('bot', False))
     is_new = event_type == 'new'
     is_minor = bool(event.get('minor', False))
@@ -235,7 +228,7 @@ def transform_event(event, ns_map):
     msg = {
         'page_title': title,
         'user': user,
-        'is_anon': is_anon,
+        'is_anon': anon_flag,
         'is_bot': is_bot,
         'is_new': is_new,
         'is_minor': is_minor,
@@ -256,82 +249,6 @@ def transform_event(event, ns_map):
     return msg
 
 
-class GeoIPManager:
-    """Manages the MaxMind GeoLite2 database with periodic reload on mtime change."""
-
-    def __init__(self, db_path, check_interval=DEFAULT_GEOIP_UPDATE_INTERVAL):
-        self.db_path = db_path
-        self.check_interval = check_interval
-        self.reader = None
-        self.last_mtime = 0
-        self._load()
-
-    def _load(self):
-        try:
-            mtime = os.path.getmtime(self.db_path)
-            self.reader = maxminddb.open_database(self.db_path)
-            self.last_mtime = mtime
-            logger.info('Loaded GeoIP database from %s (mtime=%s)', self.db_path, mtime)
-        except Exception:
-            logger.exception('Failed to load GeoIP database from %s', self.db_path)
-            self.reader = None
-
-    def check_reload(self):
-        """Reload the database if the file has been modified."""
-        try:
-            mtime = os.path.getmtime(self.db_path)
-            if mtime > self.last_mtime:
-                logger.info('GeoIP database modified, reloading...')
-                old_reader = self.reader
-                self._load()
-                if old_reader:
-                    old_reader.close()
-        except Exception:
-            logger.exception('Error checking GeoIP database mtime')
-
-    def lookup(self, ip, lang='en'):
-        """Look up geographic info for an IP address.
-
-        Returns a dict with keys: country_name, latitude, longitude,
-        region_name, city. All values may be None.
-        """
-        geo_loc = {}
-        if not self.reader:
-            return geo_loc
-
-        info_to_geoloc = {
-            'country_name': ['country', 'names', lang],
-            'latitude': ['location', 'latitude'],
-            'longitude': ['location', 'longitude'],
-            'region_name': ['subdivisions', 0, 'names', lang],
-            'city': ['city', 'names', lang],
-        }
-        try:
-            result = self.reader.get(ip)
-            if not result:
-                return geo_loc
-        except Exception:
-            logger.debug('GeoIP lookup failed for %r', ip)
-            return geo_loc
-
-        for dst, src_path in info_to_geoloc.items():
-            cursor = result
-            for key in src_path:
-                try:
-                    cursor = cursor[key]
-                except (KeyError, IndexError, TypeError):
-                    cursor = None
-                    break
-            geo_loc[dst] = cursor
-
-        return geo_loc
-
-    def close(self):
-        if self.reader:
-            self.reader.close()
-            self.reader = None
-
-
 @dataclasses.dataclass
 class LangChannel:
     """A single language channel: holds its config and connected clients."""
@@ -345,9 +262,8 @@ class LangChannel:
 class MultiLangWikimonServer:
     """Multi-language server: one EventStreams consumer, per-language WebSocket channels."""
 
-    def __init__(self, languages, port, geoip_manager):
+    def __init__(self, languages, port):
         self.port = port
-        self.geoip = geoip_manager
         self.channels = {}          # server_name -> LangChannel
         self.path_to_channel = {}   # ws_path -> LangChannel
         self.msg_count = 0
@@ -490,26 +406,10 @@ class MultiLangWikimonServer:
     async def _process_event(self, event, channel):
         """Transform an event and broadcast it to the channel."""
         msg = transform_event(event, channel.ns_map)
-
-        # GeoIP lookup for anonymous users
-        if msg['is_anon'] and msg['user']:
-            loop = asyncio.get_running_loop()
-            geo = await loop.run_in_executor(None, self.geoip.lookup, msg['user'])
-            msg['geo_ip'] = geo
-        else:
-            msg['geo_ip'] = {}
-
         json_str = dumps(msg, sort_keys=True)
         self.msg_count += 1
         logger.debug('Broadcasting to %s: %s', channel.lang, json_str[:200])
         await self.broadcast(channel, json_str)
-
-    async def _periodic_geoip_check(self):
-        """Periodically check if the GeoIP database needs reloading."""
-        while True:
-            await asyncio.sleep(self.geoip.check_interval)
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self.geoip.check_reload)
 
     async def _periodic_stats(self):
         """Periodically log server stats."""
@@ -537,7 +437,6 @@ class MultiLangWikimonServer:
             logger.info('WebSocket server listening on 0.0.0.0:%d', self.port)
             await asyncio.gather(
                 self.consume_eventstream(),
-                self._periodic_geoip_check(),
                 self._periodic_stats(),
             )
 
@@ -545,11 +444,6 @@ class MultiLangWikimonServer:
 def get_argparser():
     desc = "Broadcast realtime Wikimedia edits over WebSockets (multi-language)"
     prs = ArgumentParser(description=desc)
-    prs.add_argument('--geoip-db', default=None,
-                     help='path to the GeoLite2 database')
-    prs.add_argument('--geoip-update-interval',
-                     default=DEFAULT_GEOIP_UPDATE_INTERVAL, type=int,
-                     help='seconds between GeoIP db mtime checks')
     prs.add_argument('--port', default=DEFAULT_BCAST_PORT, type=int,
                      help='single listen port for all WebSocket connections')
     prs.add_argument('--lang', default=None,
@@ -581,10 +475,6 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
     )
 
-    # GeoIP setup
-    geoip_db_path = args.geoip_db or DEFAULT_GEOIP_DB
-    geoip = GeoIPManager(geoip_db_path, args.geoip_update_interval)
-
     # Language selection
     if args.lang:
         languages = [(args.lang, args.project, f'/{args.lang}/')]
@@ -595,15 +485,12 @@ def main():
     server = MultiLangWikimonServer(
         languages=languages,
         port=args.port,
-        geoip_manager=geoip,
     )
 
     try:
         asyncio.run(server.run())
     except KeyboardInterrupt:
         logger.info('Shutting down')
-    finally:
-        geoip.close()
 
 
 if __name__ == '__main__':

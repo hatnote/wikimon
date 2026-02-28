@@ -3,7 +3,7 @@
 import pytest
 
 from wikimon.parsers import (
-    is_ip,
+    is_anon,
     parse_comment,
     parse_revs_from_url,
     parse_section_title,
@@ -11,36 +11,57 @@ from wikimon.parsers import (
 )
 
 
-# ---- is_ip ----
+# ---- is_anon ----
 
-class TestIsIP:
+class TestIsAnon:
     def test_ipv4(self):
-        assert is_ip('192.168.1.1') is True
+        assert is_anon('192.168.1.1') is True
 
     def test_ipv4_loopback(self):
-        assert is_ip('127.0.0.1') is True
+        assert is_anon('127.0.0.1') is True
 
     def test_ipv6_full(self):
-        assert is_ip('2001:558:6033:77:453B:B384:FEF:E2D9') is True
+        assert is_anon('2001:558:6033:77:453B:B384:FEF:E2D9') is True
 
     def test_ipv6_loopback(self):
-        assert is_ip('::1') is True
+        assert is_anon('::1') is True
 
     def test_username(self):
-        assert is_ip('Slaporte') is False
+        assert is_anon('Slaporte') is False
 
     def test_unicode_username(self):
-        assert is_ip('Édouard') is False
+        assert is_anon('\u00c9douard') is False
 
     def test_empty_string(self):
-        assert is_ip('') is False
+        assert is_anon('') is False
 
     def test_none_like(self):
-        # is_ip should handle falsy input without crashing
-        assert is_ip('') is False
+        assert is_anon('') is False
 
     def test_hostname(self):
-        assert is_ip('en.wikipedia.org') is False
+        assert is_anon('en.wikipedia.org') is False
+
+    # Temporary account tests (Wikipedia Nov 2025+)
+    def test_temp_account_basic(self):
+        assert is_anon('~2026-93757-24') is True
+
+    def test_temp_account_2025(self):
+        assert is_anon('~2025-12345-1') is True
+
+    def test_temp_account_long_numbers(self):
+        assert is_anon('~2026-123456789-999') is True
+
+    def test_temp_account_missing_tilde(self):
+        assert is_anon('2026-93757-24') is False
+
+    def test_temp_account_wrong_format(self):
+        assert is_anon('~abcd-12345-1') is False
+
+    def test_temp_account_no_trailing_number(self):
+        assert is_anon('~2026-12345') is False
+
+    def test_registered_user_with_tilde(self):
+        assert is_anon('~RegularUser') is False
 
 
 # ---- parse_section_title ----

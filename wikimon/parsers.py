@@ -44,24 +44,37 @@ DEFAULT_NS_MAP = {ns: ns for ns in NON_MAIN_NS}
 DEFAULT_NS_MAP[''] = 'Main'
 
 
-def is_ip(addr):
-    """
-    Check whether addr is an IPv4 or IPv6 address.
+# Matches Wikipedia temporary account usernames: ~YYYY-NNNNN-NN
+_TEMP_ACCOUNT_RE = re.compile(r'^~\d{4}-\d+-\d+$')
 
-    >>> is_ip('::1')
+
+def is_anon(user):
+    """
+    Check whether user is an unregistered/anonymous editor.
+
+    Historically these were identified by IP address. Since November 2025,
+    Wikipedia assigns temporary accounts with usernames like ~2026-93757-24.
+
+    >>> is_anon('192.168.1.1')
     True
-    >>> is_ip('192.168.1.1')
+    >>> is_anon('::1')
     True
-    >>> is_ip('unacceptabllllle')
+    >>> is_anon('~2026-93757-24')
+    True
+    >>> is_anon('ExampleUser')
     False
     """
-    if not addr:
+    if not user:
         return False
+    # Temp accounts (Nov 2025+): ~YYYY-NNNNN-NN
+    if _TEMP_ACCOUNT_RE.match(user):
+        return True
+    # Legacy IP-based anonymous editors
     try:
-        socket.inet_pton(socket.AF_INET, addr)
+        socket.inet_pton(socket.AF_INET, user)
     except (socket.error, OSError):
         try:
-            socket.inet_pton(socket.AF_INET6, addr)
+            socket.inet_pton(socket.AF_INET6, user)
         except (socket.error, OSError):
             return False
     return True
