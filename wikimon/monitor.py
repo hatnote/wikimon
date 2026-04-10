@@ -48,14 +48,14 @@ IGNORED_EVENT_TYPES = frozenset({'categorize', 'log'})
 
 # Read timeout for SSE stream. EventStreams sends heartbeat `:` comments
 # every ~15s. If no bytes arrive within this window, the connection is dead.
-SSE_READ_TIMEOUT_SECONDS = 120
+SSE_READ_TIMEOUT_SECONDS = 30
 
 # If no en.wikipedia event has arrived in this many seconds, warn.
-# en.wiki averages ~2 edits/sec; 120s silence = stream is dead.
-EN_STALE_THRESHOLD_SECONDS = 120
+# en.wiki averages ~2 edits/sec; 60s silence is suspicious.
+EN_STALE_THRESHOLD_SECONDS = 60
 
 # If no event on ANY channel has arrived in this many seconds, warn.
-STALE_STREAM_THRESHOLD_SECONDS = 300
+STALE_STREAM_THRESHOLD_SECONDS = 120
 
 # Default language configurations
 # Each entry: (lang, project, ws_path)
