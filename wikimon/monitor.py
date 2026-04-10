@@ -40,6 +40,23 @@ USER_AGENT = 'wikimon/0.7.0 (https://github.com/hatnote/wikimon; wikimon@hatnote
 # Stats logging interval in seconds
 STATS_LOG_INTERVAL = 120
 
+# Event types from EventStreams that are not real content edits.
+# 'categorize' fires on category membership changes; 'log' covers
+# administrative actions (blocks, moves, patrols, etc.).  The legacy
+# IRC feed never included these.
+IGNORED_EVENT_TYPES = frozenset({'categorize', 'log'})
+
+# Read timeout for SSE stream. EventStreams sends heartbeat `:` comments
+# every ~15s. If no bytes arrive within this window, the connection is dead.
+SSE_READ_TIMEOUT_SECONDS = 120
+
+# If no en.wikipedia event has arrived in this many seconds, warn.
+# en.wiki averages ~2 edits/sec; 120s silence = stream is dead.
+EN_STALE_THRESHOLD_SECONDS = 120
+
+# If no event on ANY channel has arrived in this many seconds, warn.
+STALE_STREAM_THRESHOLD_SECONDS = 300
+
 # Default language configurations
 # Each entry: (lang, project, ws_path)
 DEFAULT_LANGUAGES = [
@@ -187,11 +204,6 @@ def transform_event(event, ns_map):
 
     if rev_new and rev_old:
         url = f'{server_url}{server_script_path}/index.php?diff={rev_new}&oldid={rev_old}'
-    elif event_type == 'log':
-        # Log events: action field is the log type/action
-        log_type = event.get('log_type', '')
-        log_action = event.get('log_action', '')
-        url = f'{log_type}/{log_action}' if log_type else ''
     else:
         url = ''
 
@@ -206,14 +218,7 @@ def transform_event(event, ns_map):
     comment_data = parse_comment(comment)
 
     # Determine action
-    if event_type == 'log':
-        # For log events, set page_title to Special:Log/<log_type>
-        log_type = event.get('log_type', '')
-        action = f'Special:Log/{log_type}' if log_type else 'log'
-        # Override title for new user logs to match old wikimon format
-        if log_type == 'newusers':
-            title = 'Special:Log/newusers'
-    elif event_type == 'new':
+    if event_type == 'new':
         action = 'new'
     else:
         action = 'edit'
@@ -257,6 +262,7 @@ class LangChannel:
     ws_path: str       # e.g. "/en/"
     ns_map: dict
     clients: set = dataclasses.field(default_factory=set)
+    last_event_time: float = dataclasses.field(default_factory=time.time)
 
 
 class MultiLangWikimonServer:
@@ -269,6 +275,8 @@ class MultiLangWikimonServer:
         self.msg_count = 0
         self.start_time = time.time()
         self._last_event_id = None
+        self._last_event_time = time.time()
+        self._reconnect_count = 0
 
         # Fetch all namespace maps in parallel
         ns_maps = fetch_all_namespace_maps(languages)
@@ -352,9 +360,9 @@ class MultiLangWikimonServer:
 
                 logger.info('Connecting to EventStreams (all languages, %d channels)',
                             len(self.channels))
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(EVENTSTREAMS_URL, headers=headers,
-                                           timeout=None) as resp:
+                sse_timeout = aiohttp.ClientTimeout(total=None, sock_read=SSE_READ_TIMEOUT_SECONDS)
+                async with aiohttp.ClientSession(timeout=sse_timeout) as session:
+                    async with session.get(EVENTSTREAMS_URL, headers=headers) as resp:
                         if resp.status != 200:
                             logger.error('EventStreams HTTP %d, retry in %ds',
                                          resp.status, backoff)
@@ -362,6 +370,9 @@ class MultiLangWikimonServer:
                             backoff = min(backoff * 2, max_backoff)
                             continue
                         backoff = 1  # Reset on successful connection
+                        if self._reconnect_count > 0:
+                            logger.info('EventStreams reconnected after %d retries', self._reconnect_count)
+                        self._reconnect_count = 0
                         logger.info('Connected to EventStreams')
 
                         event_id = None
@@ -388,6 +399,10 @@ class MultiLangWikimonServer:
 
                                 event_data = None
 
+                                # Skip non-content events
+                                if data.get('type') in IGNORED_EVENT_TYPES:
+                                    continue
+
                                 # Dispatch to the correct channel
                                 server_name = data.get('server_name')
                                 channel = self.channels.get(server_name)
@@ -399,7 +414,9 @@ class MultiLangWikimonServer:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception('EventStreams error, reconnecting in %ds', backoff)
+                self._reconnect_count += 1
+                logger.warning('EventStreams error (#%d), reconnecting in %ds',
+                               self._reconnect_count, backoff, exc_info=True)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
 
@@ -408,6 +425,9 @@ class MultiLangWikimonServer:
         msg = transform_event(event, channel.ns_map)
         json_str = dumps(msg, sort_keys=True)
         self.msg_count += 1
+        now = time.time()
+        channel.last_event_time = now
+        self._last_event_time = now
         logger.debug('Broadcasting to %s: %s', channel.lang, json_str[:200])
         await self.broadcast(channel, json_str)
 
@@ -419,14 +439,34 @@ class MultiLangWikimonServer:
             total_clients = sum(len(ch.clients) for ch in self.channels.values())
             per_lang = {ch.lang: len(ch.clients) for ch in self.channels.values()
                         if ch.clients}
+            now = time.time()
             stats = {
                 'msgs': self.msg_count,
                 'total_clients': total_clients,
                 'active_langs': per_lang,
                 'num_channels': len(self.channels),
                 'uptime_hours': round(uptime_hours, 2),
+                'secs_since_last_event': round(now - self._last_event_time, 1),
+                'reconnect_count': self._reconnect_count,
             }
+            en_channel = self.path_to_channel.get('/en')
+            if en_channel:
+                stats['secs_since_last_en_event'] = round(now - en_channel.last_event_time, 1)
+            else:
+                stats['secs_since_last_en_event'] = None
             logger.info('stats: %s', dumps(stats))
+
+            # Canary: English Wikipedia silence is the strongest signal
+            if en_channel:
+                en_silence = now - en_channel.last_event_time
+                if en_silence > EN_STALE_THRESHOLD_SECONDS:
+                    logger.warning(
+                        'No en.wikipedia events in %.0fs -- stream likely dead', en_silence)
+
+            # General staleness across all channels
+            since_last = now - self._last_event_time
+            if since_last > STALE_STREAM_THRESHOLD_SECONDS:
+                logger.warning('No events processed in %.0fs -- stream may be stale', since_last)
 
     async def run(self):
         """Start the WebSocket server and EventStreams consumer."""

@@ -97,45 +97,6 @@ class TestTransformEvent:
         assert msg['is_anon'] is True
         assert msg['user'] == '~2026-93757-24'
 
-    def test_log_event_newusers(self):
-        event = {
-            'type': 'log',
-            'title': 'Special:Log/newusers',
-            'user': 'NewUser123',
-            'bot': False,
-            'minor': False,
-            'comment': '',
-            'namespace': 0,
-            'server_name': 'en.wikipedia.org',
-            'server_url': 'https://en.wikipedia.org',
-            'server_script_path': '/w',
-            'log_type': 'newusers',
-            'log_action': 'create',
-        }
-        msg = transform_event(event, NS_MAP)
-        assert msg['action'] == 'Special:Log/newusers'
-        assert msg['page_title'] == 'Special:Log/newusers'
-
-    def test_log_event_other(self):
-        event = {
-            'type': 'log',
-            'title': 'Some page',
-            'user': 'Admin',
-            'bot': False,
-            'minor': False,
-            'comment': '',
-            'namespace': 0,
-            'server_name': 'en.wikipedia.org',
-            'server_url': 'https://en.wikipedia.org',
-            'server_script_path': '/w',
-            'log_type': 'block',
-            'log_action': 'block',
-        }
-        msg = transform_event(event, NS_MAP)
-        assert msg['action'] == 'Special:Log/block'
-        # Non-newusers log should not override title
-        assert msg['page_title'] == 'Some page'
-
     def test_missing_length(self):
         event = dict(SAMPLE_EDIT_EVENT)
         del event['length']
