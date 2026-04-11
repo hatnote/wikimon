@@ -59,11 +59,20 @@ class TestTransformEvent:
         assert set(msg.keys()) == EXPECTED_KEYS
 
     def test_new_page(self):
+        """New pages have type='new', no old length, no old revision."""
         event = dict(SAMPLE_EDIT_EVENT)
         event['type'] = 'new'
+        event['length'] = {'new': 8500}  # no 'old' key
+        event['revision'] = {'new': 560171723}  # no 'old' key
         msg = transform_event(event, NS_MAP)
         assert msg['is_new'] is True
         assert msg['action'] == 'new'
+        # change_size should be the full page size, not None
+        assert msg['change_size'] == 8500
+        # URL should link to the page, not be empty
+        assert 'oldid=560171723' in msg['url']
+        assert msg['url'] != ''
+        assert msg['parent_rev_id'] is None
 
     def test_bot_edit(self):
         event = dict(SAMPLE_EDIT_EVENT)
@@ -159,4 +168,53 @@ class TestTransformEvent:
         event['patrolled'] = False
         msg = transform_event(event, NS_MAP)
         assert msg['is_unpatrolled'] is True
+
+
+SAMPLE_NEWUSER_EVENT = {
+    'type': 'log',
+    'log_type': 'newusers',
+    'log_action': 'create',
+    'log_action_comment': 'New user account',
+    'namespace': 2,
+    'title': 'User:TestNewbie',
+    'user': 'TestNewbie',
+    'bot': False,
+    'server_name': 'auth.wikimedia.org',
+    'server_url': 'https://auth.wikimedia.org',
+    'server_script_path': '/enwiki/w',
+    'wiki': 'enwiki',
+    'timestamp': 1775866644,
+}
+
+
+class TestTransformNewuserEvent:
+    def test_newuser_page_title(self):
+        msg = transform_event(SAMPLE_NEWUSER_EVENT, NS_MAP)
+        assert msg['page_title'] == 'Special:Log/newusers'
+
+    def test_newuser_url_is_log_action(self):
+        msg = transform_event(SAMPLE_NEWUSER_EVENT, NS_MAP)
+        assert msg['url'] == 'create'
+
+    def test_newuser_byemail(self):
+        event = dict(SAMPLE_NEWUSER_EVENT)
+        event['log_action'] = 'byemail'
+        msg = transform_event(event, NS_MAP)
+        assert msg['url'] == 'byemail'
+
+    def test_newuser_action_field(self):
+        msg = transform_event(SAMPLE_NEWUSER_EVENT, NS_MAP)
+        assert msg['action'] == 'newusers'
+
+    def test_newuser_user_field(self):
+        msg = transform_event(SAMPLE_NEWUSER_EVENT, NS_MAP)
+        assert msg['user'] == 'TestNewbie'
+
+    def test_newuser_has_all_keys(self):
+        msg = transform_event(SAMPLE_NEWUSER_EVENT, NS_MAP)
+        assert set(msg.keys()) == EXPECTED_KEYS
+
+    def test_newuser_change_size_zero(self):
+        msg = transform_event(SAMPLE_NEWUSER_EVENT, NS_MAP)
+        assert msg['change_size'] == 0
 

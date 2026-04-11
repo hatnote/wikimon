@@ -40,11 +40,6 @@ USER_AGENT = 'wikimon/0.7.0 (https://github.com/hatnote/wikimon; wikimon@hatnote
 # Stats logging interval in seconds
 STATS_LOG_INTERVAL = 120
 
-# Event types from EventStreams that are not real content edits.
-# 'categorize' fires on category membership changes; 'log' covers
-# administrative actions (blocks, moves, patrols, etc.).  The legacy
-# IRC feed never included these.
-IGNORED_EVENT_TYPES = frozenset({'categorize', 'log'})
 
 # Read timeout for SSE stream. EventStreams sends heartbeat `:` comments
 # every ~15s. If no bytes arrive within this window, the connection is dead.
@@ -181,6 +176,31 @@ def transform_event(event, ns_map):
     change_size, url, ns, summary, action, hashtags, mentions, section,
     parsed_summary, rev_id, parent_rev_id.
     """
+    # Newusers log events need special handling to match the format
+    # the frontend (app.js) expects from the legacy v1 IRC feed.
+    if event.get('type') == 'log' and event.get('log_type') == 'newusers':
+        user = event.get('user', '')
+        return {
+            'page_title': 'Special:Log/newusers',
+            'user': user,
+            'is_anon': False,
+            'is_bot': bool(event.get('bot', False)),
+            'is_new': False,
+            'is_minor': False,
+            'is_unpatrolled': False,
+            'change_size': 0,
+            'url': event.get('log_action', 'create'),  # 'create' or 'byemail'
+            'ns': 'Special',
+            'summary': event.get('log_action_comment', ''),
+            'action': 'newusers',
+            'hashtags': [],
+            'mentions': [],
+            'section': None,
+            'parsed_summary': event.get('log_action_comment', ''),
+            'rev_id': None,
+            'parent_rev_id': None,
+        }
+
     title = event.get('title', '')
     user = event.get('user', '')
     comment = event.get('comment', '')
@@ -192,6 +212,9 @@ def transform_event(event, ns_map):
     length_old = length.get('old')
     if length_new is not None and length_old is not None:
         change_size = length_new - length_old
+    elif length_new is not None and event_type == 'new':
+        # New pages have no old length; all content is new
+        change_size = length_new
     else:
         change_size = None
 
@@ -204,6 +227,9 @@ def transform_event(event, ns_map):
 
     if rev_new and rev_old:
         url = f'{server_url}{server_script_path}/index.php?diff={rev_new}&oldid={rev_old}'
+    elif rev_new:
+        # New pages have no old revision; link to the page directly
+        url = f'{server_url}{server_script_path}/index.php?oldid={rev_new}'
     else:
         url = ''
 
@@ -399,13 +425,21 @@ class MultiLangWikimonServer:
 
                                 event_data = None
 
-                                # Skip non-content events
-                                if data.get('type') in IGNORED_EVENT_TYPES:
+                                # Skip non-content events (but keep newusers log
+                                # events — the frontend plays string swells for them)
+                                evt_type = data.get('type')
+                                if evt_type == 'categorize':
+                                    continue
+                                if evt_type == 'log' and data.get('log_type') != 'newusers':
                                     continue
 
-                                # Dispatch to the correct channel
+                                # Dispatch to the correct channel.
+                                # Newusers log events come from auth.wikimedia.org
+                                # with a 'wiki' field like 'enwiki'; map to channel.
                                 server_name = data.get('server_name')
                                 channel = self.channels.get(server_name)
+                                if channel is None and data.get('log_type') == 'newusers':
+                                    channel = self._resolve_newuser_channel(data)
                                 if channel is None:
                                     continue  # Not a language we serve
 
@@ -419,6 +453,22 @@ class MultiLangWikimonServer:
                                self._reconnect_count, backoff, exc_info=True)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
+
+    def _resolve_newuser_channel(self, data):
+        """Map a newusers log event to the correct language channel.
+
+        Newusers events have server_name='auth.wikimedia.org' and a
+        'wiki' field like 'enwiki', 'dewiki', etc.  Extract the language
+        code and look up the channel by constructed server_name.
+        """
+        wiki = data.get('wiki', '')
+        # 'enwiki' -> 'en', 'dewiki' -> 'de', 'wikidatawiki' -> skip
+        if wiki.endswith('wiki') and wiki != 'wikidatawiki':
+            lang = wiki[:-4]  # strip 'wiki'
+            if lang:
+                server_name = f'{lang}.wikipedia.org'
+                return self.channels.get(server_name)
+        return None
 
     async def _process_event(self, event, channel):
         """Transform an event and broadcast it to the channel."""
