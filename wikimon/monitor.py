@@ -52,6 +52,11 @@ EN_STALE_THRESHOLD_SECONDS = 60
 # If no event on ANY channel has arrived in this many seconds, warn.
 STALE_STREAM_THRESHOLD_SECONDS = 120
 
+# Largest single SSE line we will buffer, in bytes. Normal recentchange
+# lines run ~1-3 KiB, but Commons file uploads carrying huge metadata have
+# been seen at ~158 KiB, and there is no documented upper bound.
+MAX_SSE_LINE_BYTES = 4 * 1024 * 1024
+
 # Default language configurations
 # Each entry: (lang, project, ws_path)
 DEFAULT_LANGUAGES = [
@@ -280,6 +285,47 @@ def transform_event(event, ns_map):
     return msg
 
 
+# GoodTurn: https://goodturn.ai/p/gtp_01m2h0yfsfe5sv50y2h6vkb3zf
+async def iter_sse_lines(content):
+    """Yield SSE lines as bytes from an aiohttp response body.
+
+    Yields ``None`` in place of any line longer than MAX_SSE_LINE_BYTES, so
+    the caller can discard the partial event but still advance its resume
+    point.
+
+    aiohttp's own ``async for line in resp.content`` must not be used here.
+    It routes through StreamReader.readuntil(), which raises
+    ValueError('Chunk too big') as soon as one line exceeds the stream's
+    high-water mark (2 * read_bufsize, i.e. 128 KiB by default). That
+    exception propagated out of consume_eventstream(), and because
+    Last-Event-ID only advanced on fully parsed events, every reconnect
+    replayed the same oversized event and died again. A single 158 KiB
+    Commons upload event on 2026-09-11 wedged the stream that way for 71
+    hours, emitting ~344k identical tracebacks.
+    """
+    buf = bytearray()
+    dropping = False
+    async for chunk in content.iter_any():
+        buf += chunk
+        while True:
+            nl = buf.find(b'\n')
+            if nl < 0:
+                break
+            line = bytes(buf[:nl])
+            del buf[:nl + 1]
+            if dropping:
+                # Trailing fragment of a dropped line; resync here.
+                dropping = False
+                yield None
+            else:
+                yield line
+        if len(buf) > MAX_SSE_LINE_BYTES:
+            logger.warning('Dropping SSE line longer than %d bytes',
+                           MAX_SSE_LINE_BYTES)
+            buf.clear()
+            dropping = True
+
+
 @dataclasses.dataclass
 class LangChannel:
     """A single language channel: holds its config and connected clients."""
@@ -404,7 +450,15 @@ class MultiLangWikimonServer:
                         event_id = None
                         event_data = None
 
-                        async for line_bytes in resp.content:
+                        async for line_bytes in iter_sse_lines(resp.content):
+                            if line_bytes is None:
+                                # Oversized line was dropped. Advance the
+                                # resume point past it so a reconnect cannot
+                                # replay the same poison event forever.
+                                if event_id:
+                                    self._last_event_id = event_id
+                                event_data = None
+                                continue
                             line = line_bytes.decode('utf-8', errors='replace').rstrip('\n')
 
                             if line.startswith('id:'):

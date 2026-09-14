@@ -1,4 +1,7 @@
+import asyncio
 import time
+
+import pytest
 
 from wikimon.monitor import (
     MultiLangWikimonServer,
@@ -9,6 +12,8 @@ from wikimon.monitor import (
     SSE_READ_TIMEOUT_SECONDS,
     EN_STALE_THRESHOLD_SECONDS,
     STALE_STREAM_THRESHOLD_SECONDS,
+    MAX_SSE_LINE_BYTES,
+    iter_sse_lines,
 )
 
 
@@ -146,8 +151,6 @@ class TestServerStalenessTracking:
 class TestProcessEventTimestamps:
     """Verify _process_event updates both channel and server timestamps."""
 
-    import pytest
-
     @pytest.mark.asyncio
     async def test_process_event_updates_timestamps(self):
         server = make_test_server([('en', 'wikipedia', '/en/')])
@@ -186,3 +189,51 @@ class TestConstants:
 
     def test_stale_stream_threshold_gt_en(self):
         assert STALE_STREAM_THRESHOLD_SECONDS > EN_STALE_THRESHOLD_SECONDS
+
+
+class FakeContent:
+    """Stand-in for aiohttp's StreamReader, exposing only iter_any()."""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def iter_any(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+def collect_lines(chunks):
+    """Drain iter_sse_lines over `chunks`, without needing pytest-asyncio."""
+    async def run():
+        return [line async for line in iter_sse_lines(FakeContent(chunks))]
+    return asyncio.run(run())
+
+
+class TestOversizedSSELines:
+    """Regression coverage for the 2026-09-11 stream wedge.
+
+    A single 157,903-byte Commons upload event exceeded aiohttp's
+    readuntil() high-water mark, so line iteration raised
+    ValueError('Chunk too big'). Last-Event-ID still pointed before that
+    event, so every reconnect replayed and re-killed it: 71 hours of
+    silence.
+    """
+
+    def test_real_world_oversized_line_survives_intact(self):
+        # 158 KiB, over aiohttp's default 128 KiB high-water mark, and
+        # split across chunks the way a real socket delivers it.
+        big = b'data: ' + b'x' * 158000
+        lines = collect_lines([big[:70000], big[70000:] + b'\n',
+                               b'\n', b'data: after\n'])
+        assert lines == [big, b'', b'data: after']
+
+    def test_line_past_cap_is_dropped_and_stream_resyncs(self):
+        huge = b'data: ' + b'x' * (MAX_SSE_LINE_BYTES + 1)
+        lines = collect_lines([huge, b'\n', b'data: after\n'])
+        assert lines == [None, b'data: after']
+
+    def test_lines_split_across_arbitrary_chunk_boundaries(self):
+        payload = b'id: 42\ndata: {"a": 1}\n\n'
+        lines = collect_lines([payload[i:i + 3]
+                               for i in range(0, len(payload), 3)])
+        assert lines == [b'id: 42', b'data: {"a": 1}', b'']
