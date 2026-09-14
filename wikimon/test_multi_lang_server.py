@@ -13,6 +13,7 @@ from wikimon.monitor import (
     EN_STALE_THRESHOLD_SECONDS,
     STALE_STREAM_THRESHOLD_SECONDS,
     MAX_SSE_LINE_BYTES,
+    WATCHDOG_STALE_SECONDS,
     iter_sse_lines,
 )
 
@@ -26,6 +27,7 @@ def make_test_server(languages):
     server.msg_count = 0
     server.start_time = 0
     server._last_event_id = None
+    server._sse_resp = None
     server._last_event_time = time.time()
     server._reconnect_count = 0
     for lang, project, ws_path in languages:
@@ -237,3 +239,45 @@ class TestOversizedSSELines:
         lines = collect_lines([payload[i:i + 3]
                                for i in range(0, len(payload), 3)])
         assert lines == [b'id: 42', b'data: {"a": 1}', b'']
+
+
+class FakeResp:
+    """Stand-in for an aiohttp response: only close() is used."""
+
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class TestWatchdog:
+    """The watchdog force-reconnects from the live tail on event silence."""
+
+    def test_stale_stream_fires_and_drops_resume_point(self):
+        server = make_test_server([('en', 'wikipedia', '/en/')])
+        now = time.time()
+        server._last_event_time = now - (WATCHDOG_STALE_SECONDS + 1)
+        server._last_event_id = 'some-resume-id'
+        resp = FakeResp()
+        server._sse_resp = resp
+        assert server._watchdog_check(now) is True
+        assert resp.closed is True
+        assert server._last_event_id is None
+        assert server._last_event_time == now
+
+    def test_fresh_stream_does_not_fire(self):
+        server = make_test_server([('en', 'wikipedia', '/en/')])
+        now = time.time()
+        server._last_event_time = now - 10
+        resp = FakeResp()
+        server._sse_resp = resp
+        assert server._watchdog_check(now) is False
+        assert resp.closed is False
+
+    def test_not_yet_connected_does_not_fire(self):
+        server = make_test_server([('en', 'wikipedia', '/en/')])
+        now = time.time()
+        server._last_event_time = now - (WATCHDOG_STALE_SECONDS + 1)
+        assert server._sse_resp is None
+        assert server._watchdog_check(now) is False

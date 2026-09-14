@@ -52,6 +52,11 @@ EN_STALE_THRESHOLD_SECONDS = 60
 # If no event on ANY channel has arrived in this many seconds, warn.
 STALE_STREAM_THRESHOLD_SECONDS = 120
 
+# If no event has been processed on ANY channel in this many seconds while
+# a connection is up, the watchdog drops the resume point and reconnects.
+# 43 channels average several events/sec, so this never fires when healthy.
+WATCHDOG_STALE_SECONDS = 300
+
 # Largest single SSE line we will buffer, in bytes. Normal recentchange
 # lines run ~1-3 KiB, but Commons file uploads carrying huge metadata have
 # been seen at ~158 KiB, and there is no documented upper bound.
@@ -347,6 +352,7 @@ class MultiLangWikimonServer:
         self.msg_count = 0
         self.start_time = time.time()
         self._last_event_id = None
+        self._sse_resp = None
         self._last_event_time = time.time()
         self._reconnect_count = 0
 
@@ -435,6 +441,7 @@ class MultiLangWikimonServer:
                 sse_timeout = aiohttp.ClientTimeout(total=None, sock_read=SSE_READ_TIMEOUT_SECONDS)
                 async with aiohttp.ClientSession(timeout=sse_timeout) as session:
                     async with session.get(EVENTSTREAMS_URL, headers=headers) as resp:
+                        self._sse_resp = resp
                         if resp.status != 200:
                             logger.error('EventStreams HTTP %d, retry in %ds',
                                          resp.status, backoff)
@@ -535,6 +542,27 @@ class MultiLangWikimonServer:
         logger.debug('Broadcasting to %s: %s', channel.lang, json_str[:200])
         await self.broadcast(channel, json_str)
 
+    def _watchdog_check(self, now):
+        """Force a fresh-tail reconnect if the stream has gone event-silent.
+
+        Catches wedge shapes where bytes still flow (SSE heartbeats reset the
+        sock_read timeout) but no events are processed, e.g. a poison event
+        replayed via Last-Event-ID. Closing the response makes
+        consume_eventstream's read loop fail into its normal reconnect path;
+        clearing _last_event_id makes it resume at the live tail.
+        Returns True if it fired.
+        """
+        if self._sse_resp is None:
+            return False
+        if now - self._last_event_time <= WATCHDOG_STALE_SECONDS:
+            return False
+        logger.warning('Watchdog: no events in %.0fs; dropping resume point '
+                       'and forcing reconnect', now - self._last_event_time)
+        self._last_event_id = None
+        self._last_event_time = now  # re-arm: earliest next fire is +WATCHDOG_STALE_SECONDS
+        self._sse_resp.close()
+        return True
+
     async def _periodic_stats(self):
         """Periodically log server stats."""
         while True:
@@ -571,6 +599,8 @@ class MultiLangWikimonServer:
             since_last = now - self._last_event_time
             if since_last > STALE_STREAM_THRESHOLD_SECONDS:
                 logger.warning('No events processed in %.0fs -- stream may be stale', since_last)
+
+            self._watchdog_check(now)
 
     async def run(self):
         """Start the WebSocket server and EventStreams consumer."""
