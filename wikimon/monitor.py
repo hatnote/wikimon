@@ -6,8 +6,6 @@ wikimon.monitor
 
 Asyncio-based monitor that consumes Wikimedia EventStreams (SSE)
 and broadcasts edits to WebSocket clients.
-
-Replaces the old Twisted/IRC-based monitor_websocket.py.
 """
 
 import asyncio

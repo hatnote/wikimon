@@ -1,6 +1,0 @@
-# Nightly restart of wikimon v2. Defense-in-depth against EventStreams
-# poison-pill wedges; the 2026-09-11 oversized-event outage ran 71h because
-# the process was 124 days old and replayed a bad resume offset forever.
-# See https://goodturn.ai/p/gtp_01m2h0yfsfe5sv50y2h6vkb3zf
-# Install: sudo install -m 644 -o root -g root conf/wikimon_v2.cron /etc/cron.d/wikimon-v2
-0 9 * * * root /usr/bin/supervisorctl restart wikimon >/dev/null 2>&1

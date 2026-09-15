@@ -14,7 +14,7 @@ To run your own instance:
 
 ```
 usage: python -m wikimon.monitor [-h] [--port PORT] [--lang LANG]
-                                 [--project PROJECT] [--geoip-db GEOIP_DB]
+                                 [--project PROJECT]
                                  [--debug] [--loglevel LOGLEVEL]
 
 Broadcast realtime Wikimedia edits over WebSockets (multi-language)
@@ -24,7 +24,6 @@ optional arguments:
     --port PORT          listen port for WebSocket connections
     --lang LANG          run a single language only (for testing); omit for all
     --project PROJECT    project (used with --lang)
-    --geoip-db GEOIP_DB  path to the GeoLite2 database
     --debug
     --loglevel LOGLEVEL  e.g., DEBUG, INFO, WARN
 ```
@@ -37,7 +36,6 @@ on a single port, routing by WebSocket path.
  - Python 3.10+
  - aiohttp
  - websockets
- - maxminddb
  - requests
 
 
@@ -68,13 +66,6 @@ Here are a couple example messages, as broadcast over WebSocket:
 {
   "action": "edit",
   "change_size": -12,
-  "geo_ip": {
-    "city": "Salisbury",
-    "country_name": "United States",
-    "latitude": 38.3761,
-    "longitude": -75.6086,
-    "region_name": "Maryland"
-  },
   "hashtags": [],
   "is_anon": true,
   "is_bot": false,
@@ -92,15 +83,7 @@ Here are a couple example messages, as broadcast over WebSocket:
 }
 ```
 
-The set of keys is always the same. Anonymous edits include a `geo_ip`
-dict with geographic information; registered user edits have an empty
-`geo_ip` dict.
-
-## Geolocation
-
-Geolocation is done in-process using MaxMind's GeoLite2-City database.
-See the `geodb/` directory for more info. The `GeoIPManager` checks for
-database file updates periodically and reloads automatically.
+The set of keys is always the same.
 
 ## See also
 

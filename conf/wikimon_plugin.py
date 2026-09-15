@@ -17,7 +17,7 @@ HEARTBEAT = "true"
 
 PROC_FILE = "/proc/sys/fs/file-nr"
 
-WIKIMON_LOGFILE = '/home/hatnote/wikimon_v2/logs/wikimon.err.log'
+WIKIMON_LOGFILE = '/home/hatnote/wikimon/logs/wikimon.err.log'
 
 # V2 stats format: "<timestamp>\twikimon\tstats: <json>"
 STATS_RE = re.compile(r'(?P<timestamp>[^\t]+)\twikimon\tstats: (?P<data>\{.*\})')

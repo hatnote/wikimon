@@ -21,7 +21,6 @@ from wikimon.monitor import (
 def make_test_server(languages):
     server = object.__new__(MultiLangWikimonServer)
     server.port = 9500
-    server.geoip = None
     server.channels = {}
     server.path_to_channel = {}
     server.msg_count = 0
